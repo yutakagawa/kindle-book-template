@@ -1,0 +1,15 @@
+@charset "UTF-8";
+/*
+ * horizontal.css — 横書き（左綴じ）用
+ * 綴じ方向は OPF の spine page-progression-direction="ltr" で指定される（build.py が設定）。
+ */
+html {
+  -webkit-writing-mode: horizontal-tb;
+  -epub-writing-mode: horizontal-tb;
+  writing-mode: horizontal-tb;
+}
+
+/* 横書きの技術書は段落を字下げせず、段落間を空ける方が読みやすい */
+p { text-indent: 0; margin: 0 0 0.8em 0; }
+li p, td p, th p, .admonition p { margin-bottom: 0.4em; }
+

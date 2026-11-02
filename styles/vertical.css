@@ -1,0 +1,142 @@
+@charset "UTF-8";
+@namespace epub "http://www.idpf.org/2007/ops";
+/*
+ * vertical.css — 縦書き（右綴じ）用
+ *
+ * 綴じ方向は OPF の spine page-progression-direction="rtl" で指定される（build.py が設定）。
+ * Kindle（KF8 / Enhanced Typesetting）と EPUB リーダーの両方で効くよう、
+ * -webkit- / -epub- 接頭辞付きのプロパティを併記している。
+ *
+ * 縦書き (vertical-rl) では「上下」と「左右」の役割が入れ替わる:
+ *   - 行の進む方向（ブロック方向）: 右 → 左   … margin-right が「前」、margin-left が「後」
+ *   - 文字の進む方向（インライン方向）: 上 → 下 … padding-top が「字下げ」
+ * base.css は横書き前提で書かれているので、ここで物理方向を付け替える。
+ */
+
+html {
+  -webkit-writing-mode: vertical-rl;
+  -epub-writing-mode: vertical-rl;
+  writing-mode: vertical-rl;
+  /* 和文は正立、英数字は横倒し（縦書きの標準） */
+  -webkit-text-orientation: mixed;
+  -epub-text-orientation: mixed;
+  text-orientation: mixed;
+}
+
+/* 縦書きの本文は見出しの直後の段落も 1 字下げする（和書の慣習） */
+h1 + p, h2 + p, h3 + p, h4 + p { text-indent: 1em; }
+
+body {
+  /* 禁則処理を厳格に */
+  -webkit-line-break: strict;
+  line-break: strict;
+}
+
+/* ---------- 見出し ---------- */
+h1 { margin: 0 0 0 2em; }
+h2 { margin: 0 2em 0 1em; }
+h3 { margin: 0 1.5em 0 0.5em; }
+h4, h5, h6 { margin: 0 1em 0 0.5em; }
+.chapter-number { margin: 0 0 0 0.5em; }
+
+/* ---------- リスト・引用 ---------- */
+ul, ol { margin: 0 0.8em; padding: 2em 0 0 0; }
+li { margin: 0 0.2em; }
+blockquote {
+  margin: 0 1em;
+  padding: 1em 0 0 0;
+  border-left: none;
+  border-top: 0.2em solid gray;
+}
+hr { margin: 0 2em; border-top: none; border-right: 1px solid gray; }
+
+/* ---------- 縦中横・文字の向き ---------- */
+.tcy {
+  -webkit-text-combine: horizontal;
+  -epub-text-combine: horizontal;
+  text-combine-upright: all;
+}
+.upright {
+  -webkit-text-orientation: upright;
+  -epub-text-orientation: upright;
+  text-orientation: upright;
+}
+.sideways {
+  -webkit-text-orientation: sideways;
+  -epub-text-orientation: sideways;
+  text-orientation: sideways;
+}
+
+/* インラインコードは横倒しで表示（英数字をそのまま読める向き） */
+code {
+  -webkit-text-orientation: sideways;
+  -epub-text-orientation: sideways;
+  text-orientation: sideways;
+}
+
+/* ---------- コードブロック・表 ---------- */
+pre, div.sourceCode, .listing, table, figure, .admonition {
+  margin-left: 1em;
+  margin-right: 1em;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+table { margin: 0 1em; }
+.listing pre, .listing div.sourceCode { margin: 0 0.3em 0 0; }
+th, td { vertical-align: top; }
+
+/*
+ * (1) sideways — 横組みの内容を 90° 回転させた表示（既定）
+ *     端末を横に傾けると横書きのコード・表として読める。
+ *     長いコードはページの高さで折り返して次の列・次のページへ流れるので途切れない。
+ */
+.v-sideways, .v-sideways pre, .v-sideways code, .v-sideways table, .v-sideways th, .v-sideways td {
+  -webkit-text-orientation: sideways;
+  -epub-text-orientation: sideways;
+  text-orientation: sideways;
+}
+
+/*
+ * (2) horizontal — 縦書きページの中に横組みのブロックを置く
+ *     一番読みやすいが、ブロックの高さが 1 ページに収まらないと切れてしまう。
+ *     短いコード（目安: 15 行以内）・小さい表だけの本で使う。必ず Kindle Previewer で確認すること。
+ */
+.v-horizontal {
+  -webkit-writing-mode: horizontal-tb;
+  -epub-writing-mode: horizontal-tb;
+  writing-mode: horizontal-tb;
+  margin: 0 1em;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+.v-horizontal pre, .v-horizontal table { margin: 0; }
+
+/*
+ * (3) vertical — 縦組みのまま（和文は正立、英数字は横倒し、短い数字は縦中横）
+ *     和文中心の表に向く。
+ */
+
+/* ---------- 画像・図 ---------- */
+figure { margin: 0 1.5em; }
+figure img, p > img {
+  /* 縦書きでは行の長さ＝ページの高さ。画像はページの幅・高さの両方に収める */
+  max-width: 100%;
+  max-width: 90vw;
+  max-height: 100%;
+  max-height: 90vh;
+}
+figcaption { margin: 0 0.5em 0 0; }
+
+/* ---------- 囲み ---------- */
+.admonition { padding: 1em 0.6em; }
+.admonition-title { margin: 0 0 0 0.4em; }
+
+/* ---------- 脚注 ---------- */
+section.footnotes hr { margin: 0 1.5em 0 1em; }
+
+/* ---------- 目次ページ ---------- */
+nav#toc ol ol, nav[epub|type~="toc"] ol ol { padding-left: 0; padding-top: 1.5em; }
+
+/* ---------- 扉 ---------- */
+.titlepage h1.title, h1.title { margin: 0 3em 0 0.5em; }
+.author { margin: 0 2em 0 0; }
