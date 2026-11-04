@@ -6,7 +6,7 @@ VALIDATE := $(PYTHON) scripts/validate.py
 # EPUBCheck で失敗にする重大度: fatal / error / warning（既定）/ info / usage
 FAIL_ON  ?= warning
 
-.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book test test-python test-node clean setup
+.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book listing listing-book test test-python test-node clean setup
 
 all: build
 
@@ -58,6 +58,14 @@ paperback-modes:
 ## 特定の本の PDF: make paperback-book BOOK=books/my-book
 paperback-book:
 	$(BUILD) --paperback $(BOOK)
+
+## KDP の内容紹介・キーワード・カテゴリー候補の下書き（全ての本）→ dist/*-listing.md
+listing:
+	$(PYTHON) scripts/kdp-listing.py --all
+
+## 特定の本の下書き: make listing-book BOOK=books/my-book
+listing-book:
+	$(PYTHON) scripts/kdp-listing.py $(BOOK)
 
 ## scripts/ のテスト（tests/）。先に pip install -r tests/requirements.txt と npm install が必要
 test: test-python test-node

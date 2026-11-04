@@ -74,10 +74,12 @@ make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample
 │   ├── validate.py            # EPUBCheck による検証（警告以上で失敗）
 │   ├── new-book.py            # 新しい本の雛形を対話形式で作る
 │   ├── check-manuscript.mjs   # 原稿のチェック（npm run lint）
+│   ├── kdp-listing.py         # KDP の内容紹介・キーワード・カテゴリー候補の下書き（docs/kdp-listing.md）
 │   ├── node-env.mjs           # Node.js のバージョンの確認（check-manuscript.mjs から使う）
 │   ├── use_venv.py            # .venv があればその Python で起動し直す
 │   └── setup.sh               # ツールのインストール
 ├── tests/                     # scripts/ の自動テスト（make test。[テスト](#テスト)参照）
+├── docs/                      # 解説（tutorial.md: 出版までの手順 / kdp-listing.md: 登録情報の下書き）
 ├── templates/paperback.html   # ペーパーバック用 HTML のテンプレート（扉・目次・本文・奥付）
 ├── lint/                      # 原稿のチェックの設定
 │   ├── dict/technical.yml     #   技術書向けの表記ルール（辞書）
@@ -323,6 +325,7 @@ layout:
 | `css` | – | 追加の CSS ファイル（本のディレクトリからの相対パス） |
 | `fonts` | – | 埋め込むフォント（通常は不要。[設計上の判断](#設計上の判断kdp-ガイドラインに基づいて決めたこと)参照） |
 | `output` | – | 出力ファイル名（既定 `<ディレクトリ名>.epub`） |
+| `listing.*` | – | KDP の登録情報の下書き（`scripts/kdp-listing.py`）の設定。[docs/kdp-listing.md](docs/kdp-listing.md) 参照 |
 
 ### アクセシビリティのメタデータ
 
@@ -956,7 +959,7 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
    - 言語: 日本語
    - 本のタイトル・サブタイトル、その **フリガナ** と **ローマ字**（日本語の本では入力が必要）
    - 著者名とフリガナ・ローマ字。`book.yaml` の `title` / `author` と**同じ表記**にする
-   - 内容紹介、キーワード（最大 7 個）、カテゴリー
+   - 内容紹介、キーワード（最大 7 個）、カテゴリー。`make listing` で原稿と `book.yaml` から下書きを作れる（[docs/kdp-listing.md](docs/kdp-listing.md)）
    - 出版に関して必要な権利: 自分が著作権を持っていれば「私は著作権を所有しており…」を選択
 3. **電子書籍のコンテンツ**
    - 原稿: 「電子書籍の原稿をアップロード」で `dist/*.epub` を選択。DRM の有無を選ぶ

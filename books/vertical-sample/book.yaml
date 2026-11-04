@@ -87,6 +87,15 @@ paperback:
   #   - 本書の内容に関するお問い合わせは……
   # output: my-book-paperback.pdf
 
+# ---- KDP の登録情報の下書き（python3 scripts/kdp-listing.py で dist/<名前>-listing.md を作る。すべて省略可） ----
+# listing:
+#   description: |               # 内容紹介を自分で書いたら、ここに HTML で書く（文字数・タグ・禁止事項を確認する）
+#     <p>……</p>
+#   keywords: [時間管理, 業務改善]  # 必ず入れたいキーワード（上の keywords より優先。7 個まで）
+#   exclude_keywords: [ファイル]    # 原稿から抽出された候補のうち、使わない語
+#   categories:                  # 決めたカテゴリー（3 つまで。KDP の画面で選んだ名前のメモ）
+#     - コンピュータ・IT > プログラミング
+
 # ---- 追加の CSS（省略可） ----
 # css:
 #   - custom.css
