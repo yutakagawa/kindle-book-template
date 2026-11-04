@@ -1,0 +1,156 @@
+# =====================================================================
+# 技術書向けの表記ルール（textlint-rule-prh 用の辞書）
+#
+# どの本にも共通する一般的なルールです。本ごと・プロジェクトごとの表記
+# （用語の統一、カタカナ語の長音など）は project.yml に書いてください。
+#
+# 書き方: https://github.com/prh/prh
+#   expected … 正しい表記
+#   pattern  … 誤りとして検出する表記（文字列、または /正規表現/）。省略すると expected の大文字小文字・全角半角違いを検出
+#   specs    … ルールの自己テスト。from を書くと to に直されることを textlint 実行時に確認する
+# =====================================================================
+version: 1
+
+rules:
+  # ---- 送り仮名（「公用文における漢字使用等について」に合わせる） ----
+  - expected: 行$1
+    pattern: /行な([わいうえおっ])/
+    specs:
+      - from: 処理を行なう
+        to: 処理を行う
+      - from: 行なわれる
+        to: 行われる
+  - expected: 表$1
+    pattern: /表わ([さしすせそ])/
+    specs:
+      - from: 表わす
+        to: 表す
+  - expected: 現$1
+    pattern: /現わ(れ)/
+    specs:
+      - from: 現われる
+        to: 現れる
+  - expected: 終わ$1
+    pattern: /終([らりるれろっ])/
+    specs:
+      - from: 終る
+        to: 終わる
+  - expected: 変わ$1
+    pattern: /(?<![大異])変([らりるれろっ])/
+    specs:
+      - from: 変る
+        to: 変わる
+  - expected: 押さえ
+    pattern: /押え/
+    specs:
+      - from: キーを押える
+        to: キーを押さえる
+  - expected: 少な$1
+    pattern: /少([いくかけ])/
+    specs:
+      - from: 少い
+        to: 少ない
+  - expected: 断$1
+    pattern: /断わ([らりるれろっ])/
+    specs:
+      - from: 断わる
+        to: 断る
+
+  # ---- 接続詞・助詞はひらがな（副詞・形式名詞・補助動詞は専用の textlint ルールで検出） ----
+  - expected: および
+    pattern: 及び
+  - expected: または
+    pattern: 又は
+  - expected: ならびに
+    pattern: 並びに
+  - expected: ただし
+    pattern: 但し
+  - expected: すなわち
+    pattern: 即ち
+  - expected: なお
+    pattern: /(?<=^|[。、\n])尚(?=[、])/
+    specs:
+      - from: 尚、詳細は後述します。
+        to: なお、詳細は後述します。
+  - expected: したがって
+    pattern: /(?<=^|[。\n])従って/
+    specs:
+      - from: 従って、次の手順で進めます。
+        to: したがって、次の手順で進めます。
+      - from: 手順に従って進めます。
+        to: 手順に従って進めます。
+  - expected: など
+    pattern: /(?<=[ァ-ヶーa-zA-Z0-9）」])等(?=[をがはのにでも、。）])/
+    specs:
+      - from: Python等を使います。
+        to: Pythonなどを使います。
+      - from: 平等に扱う
+        to: 平等に扱う
+  - expected: ように
+    pattern: /(?<![同異多仕模王皆])様に/
+    specs:
+      - from: 次の様に書きます
+        to: 次のように書きます
+      - from: 同様に書きます
+        to: 同様に書きます
+  - expected: できる
+    pattern: /出来る/
+  - expected: でき$1
+    pattern: /出来(ない|ます|ません|た|て|れば)/
+    specs:
+      - from: 実行出来ます
+        to: 実行できます
+      - from: 出来上がり
+        to: 出来上がり
+
+  # ---- 記号 ----
+  - expected: 〜
+    pattern: ～
+    prh: 範囲を表す波ダッシュは「〜」（U+301C）に統一します
+  - expected: （$1）
+    pattern: /\(([^()\x00-\x7F][^()]*)\)/
+    prh: 日本語を囲む括弧は全角にします
+    specs:
+      - from: EPUB(電子書籍の形式)
+        to: EPUB（電子書籍の形式）
+      - from: f(x)
+        to: f(x)
+
+  # ---- 製品・技術名の大文字小文字 ----
+  - expected: JavaScript
+    pattern: /\b(?:javascript|Javascript|JAVASCRIPT)\b/
+  - expected: TypeScript
+    pattern: /\b(?:typescript|Typescript)\b/
+  - expected: GitHub
+    pattern: /\b(?:github|Github|GITHUB)\b/
+  - expected: GitHub Actions
+    pattern: /\bGitHub actions\b/
+  - expected: macOS
+    pattern: /\b(?:MacOS|MacOSX|Mac OS X|Mac OS|macos|MACOS)\b/
+  - expected: iPhone
+    pattern: /\b(?:iphone|IPhone|IPHONE)\b/
+  - expected: Wi-Fi
+    pattern: /\b(?:wifi|WiFi|Wifi|wi-fi|Wi-fi)\b/
+  - expected: Node.js
+    pattern: /\b(?:node\.js|NodeJS|nodejs|Node\.JS|Nodejs)\b/
+  - expected: Windows
+    pattern: /\bwindows\b/
+  - expected: Linux
+    pattern: /\blinux\b/
+  - expected: Docker
+    pattern: /\bdocker\b(?![-./\w])/
+  - expected: YAML
+    pattern: /\b(?:yaml|Yaml)\b(?![-./\w])/
+  - expected: JSON
+    pattern: /\b(?:json|Json)\b(?![-./\w])/
+  - expected: HTML
+    pattern: /\b(?:html|Html)\b(?![-./\w])/
+  - expected: CSS
+    pattern: /\bcss\b(?![-./\w])/
+  - expected: URL
+    pattern: /\b(?:url|Url)\b(?![-./\w])/
+  - expected: ID
+    pattern: /(?<![\w-])(?:Id|id)(?![\w-])/
+    specs:
+      - from: idを付ける
+        to: IDを付ける

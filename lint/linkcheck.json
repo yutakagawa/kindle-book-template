@@ -1,0 +1,12 @@
+{
+  "external": {
+    "timeout": 15000,
+    "retries": 2,
+    "concurrency": 8,
+    "ignore": [
+      "^https?://(localhost|127\\.0\\.0\\.1)([:/]|$)",
+      "^https?://([a-z0-9-]+\\.)*example\\.(com|org|net)([:/]|$)"
+    ]
+  },
+  "imageExtensions": [".jpg", ".jpeg", ".png", ".gif", ".svg"]
+}

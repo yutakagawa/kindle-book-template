@@ -1,0 +1,36 @@
+name: Lint manuscripts
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PANDOC_VERSION: "3.9"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install npm packages
+        run: npm ci
+
+      # リンクチェックで原稿を解析するために使う（ビルドと同じバージョン）
+      - name: Install Pandoc
+        run: |
+          curl -fsSL -o /tmp/pandoc.deb \
+            "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb"
+          sudo dpkg -i /tmp/pandoc.deb
+          pandoc --version | head -1
+
+      # 表記ゆれ・文章（textlint）とリンク切れ・参照ミスをまとめて検査する。
+      # 問題のある行には注釈が付き、エラーがあるとジョブが失敗する（警告だけなら成功）
+      - name: Check manuscripts
+        run: npm run lint

@@ -1,0 +1,57 @@
+{
+  "plugins": {
+    "pandoc": true
+  },
+  "filters": {
+    "comments": true,
+    "allowlist": {
+      "allow": []
+    }
+  },
+  "rules": {
+    "preset-ja-technical-writing": {
+      "no-mix-dearu-desumasu": {
+        "preferInHeader": "",
+        "preferInBody": "",
+        "preferInList": "",
+        "strict": false
+      },
+      "ja-no-weak-phrase": {
+        "severity": "warning"
+      },
+      "no-doubled-joshi": {
+        "severity": "warning"
+      },
+      "ja-no-successive-word": {
+        "severity": "warning"
+      },
+      "ja-no-redundant-expression": {
+        "severity": "warning"
+      },
+      "sentence-length": {
+        "severity": "warning",
+        "max": 100
+      },
+      "max-ten": {
+        "severity": "warning",
+        "max": 3
+      }
+    },
+    "preset-ja-spacing": {
+      "ja-space-between-half-and-full-width": false,
+      "ja-space-around-code": false,
+      "ja-no-space-around-slash": false
+    },
+    "@textlint-ja/no-synonyms": true,
+    "ja-hiragana-keishikimeishi": true,
+    "ja-hiragana-fukushi": true,
+    "ja-hiragana-hojodoushi": true,
+    "no-mixed-zenkaku-and-hankaku-alphabet": true,
+    "prh": {
+      "rulePaths": [
+        "lint/dict/technical.yml",
+        "lint/dict/project.yml"
+      ]
+    }
+  }
+}

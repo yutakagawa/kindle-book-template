@@ -1,0 +1,71 @@
+# =====================================================================
+# プロジェクト独自の表記ルール（textlint-rule-prh 用の辞書）
+#
+# この本（シリーズ）で決めた表記をここに追加してください。
+# 書き方は technical.yml の冒頭を参照。追加したら `npm run lint` で確認します。
+#
+# 例:
+#   - expected: ログイン          # 正しい表記
+#     pattern:                    # 検出する表記（複数書ける）
+#       - ログオン
+#       - サインオン
+#     prh: 「ログイン」に統一します   # 指摘のときに表示する説明（省略可）
+# =====================================================================
+version: 1
+
+rules:
+  # ---- このテンプレートで扱う製品・形式の名前 ----
+  - expected: Kindle
+    pattern: /\b(?:kindle|KINDLE)\b/
+  - expected: EPUB
+    pattern: /\b(?:epub|Epub|ePub)\b(?![-:./\w])/
+    specs:
+      - from: epubファイル
+        to: EPUBファイル
+  - expected: EPUBCheck
+    pattern: /\b(?:epubcheck|Epubcheck|EpubCheck|EPUBcheck)\b(?![-./\w])/
+  - expected: Pandoc
+    pattern: /\bpandoc\b(?![-./\w])/
+  - expected: Markdown
+    pattern: /\b(?:markdown|MarkDown|MARKDOWN)\b(?![-./\w])/
+  - expected: Kindle Previewer
+    pattern: /Kindle previewer/
+  - expected: 電子書籍
+    pattern:
+      - 電子本
+      - デジタル書籍
+
+  # ---- カタカナ語の語末の長音 ----
+  # 本テンプレートのサンプル原稿は JIS Z 8301 にならい、3 音以上の語の語末の長音を
+  # 省略しています（フォルダ・エディタ・フィルタ）。「フォルダー」のように長音を付ける
+  # 表記（内閣告示「外来語の表記」・マイクロソフトのスタイルガイドなど）にしたい場合は、
+  # expected と pattern を入れ替えてください。
+  - expected: サーバ
+    pattern: サーバー
+  - expected: ユーザ
+    pattern: ユーザー
+  - expected: フォルダ
+    pattern: フォルダー
+  - expected: エディタ
+    pattern: エディター
+  - expected: フィルタ
+    pattern: フィルター
+  - expected: ブラウザ
+    pattern: ブラウザー
+  - expected: パラメータ
+    pattern: パラメーター
+  - expected: コンピュータ
+    pattern: コンピューター
+  - expected: プリンタ
+    pattern: プリンター
+  - expected: ヘッダ
+    pattern: ヘッダー
+  - expected: フッタ
+    pattern: フッター
+  - expected: ドライバ
+    pattern: ドライバー
+  - expected: インタフェース
+    pattern:
+      - インターフェース
+      - インターフェイス
+      - インタフェイス

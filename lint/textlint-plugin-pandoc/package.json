@@ -1,0 +1,11 @@
+{
+  "name": "textlint-plugin-pandoc",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pandoc 独自の Markdown 記法（囲み・属性・ルビ・表キャプション）を textlint の検査対象から外すプラグイン",
+  "main": "index.js",
+  "type": "commonjs",
+  "peerDependencies": {
+    "@textlint/textlint-plugin-markdown": "*"
+  }
+}

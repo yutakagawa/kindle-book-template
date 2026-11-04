@@ -2,7 +2,7 @@
 PYTHON ?= python3
 BUILD  := $(PYTHON) scripts/build.py
 
-.PHONY: all build check vertical horizontal clean setup
+.PHONY: all build check lint lint-fix vertical horizontal clean setup
 
 all: build
 
@@ -13,6 +13,13 @@ build:
 ## ビルドして EPUBCheck で検証
 check:
 	$(BUILD) --all --check
+
+## 原稿の品質チェック（表記ゆれ・文章・リンク切れ）。先に npm install が必要
+lint:
+	npm run lint
+
+lint-fix:
+	npm run lint:fix
 
 ## サンプル単体のビルド
 vertical:

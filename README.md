@@ -8,6 +8,7 @@ Markdown で書いた原稿から、**Kindle Direct Publishing（KDP）にその
 - 見出し／自動目次／シンタックスハイライト／表／図番号／囲み／脚注／ルビに対応
 - **ISBN なし**で出版できるメタデータ（固定 UUID）を `book.yaml` で管理
 - **GitHub Actions** で push のたびに縦書き版・横書き版の両方をビルドし、EPUBCheck で検証
+- `npm run lint` で **表記ゆれ・文章・リンク切れ** をまとめてチェック（[原稿のチェック](#原稿のチェック)）
 
 ```bash
 make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
@@ -23,12 +24,13 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 4. [新しい本を作る](#新しい本を作る)
 5. [設定ファイル book.yaml](#設定ファイル-bookyaml)
 6. [原稿の書き方](#原稿の書き方)
-7. [縦書きの表示の工夫](#縦書きの表示の工夫)
-8. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
-9. [KDP へのアップロード手順](#kdp-へのアップロード手順)
-10. [GitHub Actions](#github-actions)
-11. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
-12. [トラブルシューティング](#トラブルシューティング)
+7. [原稿のチェック](#原稿のチェック)
+8. [縦書きの表示の工夫](#縦書きの表示の工夫)
+9. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
+10. [KDP へのアップロード手順](#kdp-へのアップロード手順)
+11. [GitHub Actions](#github-actions)
+12. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
+13. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -42,6 +44,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   │   ├── chapters/*.md      #   原稿（1 章 = 1 ファイル）
 │   │   └── images/            #   表紙・図版
 │   └── vertical-sample/       # 縦書き版サンプル（実用書: 小さな自動化のすすめ）
+│       └── textlint.json      #   この本だけのチェック設定（漢数字を許可）
 ├── filters/                   # Pandoc の Lua フィルタ
 │   ├── linebreaks.lua         #   日本語の改行で空白が入らないようにする
 │   ├── crossref.lua           #   章番号・図/表/リスト番号・相互参照
@@ -55,8 +58,18 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   └── kindle.theme           #   シンタックスハイライトの配色（E-ink でも区別できる）
 ├── scripts/
 │   ├── build.py               # ビルドスクリプト（本体）
+│   ├── check-manuscript.mjs   # 原稿のチェック（npm run lint）
 │   └── setup.sh               # ツールのインストール
-├── .github/workflows/build.yml
+├── lint/                      # 原稿のチェックの設定
+│   ├── dict/technical.yml     #   技術書向けの表記ルール（辞書）
+│   ├── dict/project.yml       #   プロジェクト独自の表記ルール（辞書）
+│   ├── linkcheck.json         #   リンクチェックの設定
+│   └── textlint-plugin-pandoc/#   Pandoc の記法を textlint に正しく読ませるプラグイン
+├── .github/workflows/
+│   ├── build.yml              # EPUB のビルドと EPUBCheck
+│   └── lint.yml               # 原稿のチェック
+├── .textlintrc.json           # textlint のルール設定
+├── package.json               # チェック用ツール（Node.js）
 ├── Makefile
 └── requirements.txt
 ```
@@ -71,6 +84,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 | Python 3.9 以上 + PyYAML | ビルドスクリプト・設定ファイルの読み込み | macOS / Linux / Windows のどれでも動く |
 | [EPUBCheck](https://www.w3.org/publishing/epubcheck/)（任意・Java 11 以上） | EPUB の規格チェック | W3C 公式の検証ツール。KDP でのエラーを事前に減らせる |
 | [Kindle Previewer 3](https://kdp.amazon.co.jp/ja_JP/help/topic/G202131170)（任意） | Kindle での見え方の確認 | Amazon 公式。KDP と同じ変換エンジンで表示できる |
+| [Node.js](https://nodejs.org/) 20 以上 + [textlint](https://textlint.org/)（任意） | 原稿のチェック | 日本語の表記ゆれ・技術文書向けのルールが最も充実している校正ツール（[詳細](#チェックの内容とツール)） |
 
 ### macOS / Linux / WSL
 
@@ -84,11 +98,14 @@ bash scripts/setup.sh
 - `pip install -r requirements.txt`（PyYAML・Pillow）
 - EPUBCheck を `tools/` にダウンロード（Java が必要）
 
+原稿のチェックを使う場合は、Node.js 20 以上を入れてから、リポジトリのルートで `npm install` を実行します。
+
 ### Windows
 
 1. Pandoc をインストール: `winget install --id JohnMacFarlane.Pandoc`（または [公式インストーラ](https://pandoc.org/installing.html)）
 2. Python をインストールして `py -m pip install -r requirements.txt`
 3. （任意）EPUBCheck: [リリースページ](https://github.com/w3c/epubcheck/releases) から zip を取得し、展開した `epubcheck.jar` のパスを環境変数 `EPUBCHECK_JAR` に設定
+4. （任意）原稿のチェック: `winget install OpenJS.NodeJS.LTS` で Node.js を入れ、`npm install`
 
 `make` が無い場合は `py scripts\build.py --all` のように直接実行してください（WSL を使うと macOS / Linux と同じ手順でビルドできます）。
 
@@ -129,7 +146,8 @@ python3 -c "import uuid; print(uuid.uuid4())"   # 新しい UUID を作る
 1. `books/my-book/book.yaml` のタイトル・著者・**uuid（必ず新しい値に）**・表紙を書き換える
 2. `chapters/` の原稿を書き換え、`book.yaml` の `chapters` に順番どおり並べる
 3. `images/cover.jpg` を差し替える
-4. `make book BOOK=books/my-book`
+4. `npm run lint -- books/my-book` で原稿をチェック（[原稿のチェック](#原稿のチェック)）
+5. `make book BOOK=books/my-book`
 
 サンプルが不要になったら `books/horizontal-sample` と `books/vertical-sample` は削除してかまいません（`--all` は `books/` にある本だけをビルドします）。
 
@@ -323,6 +341,134 @@ const res = await fetch(url);
 | `::: pagebreak` → `:::` | 改ページ |
 | `::: center` / `::: right` → `:::` | 中央揃え / 右（縦書きでは下）揃え |
 
+## 原稿のチェック
+
+表記ゆれ・文章の誤りと、リンク切れ・参照ミスを **1 つのコマンドで** チェックします。
+
+```bash
+npm install          # 初回だけ（Node.js 20 以上）
+npm run lint         # books/ 以下の全ての本をチェック（make lint でも可）
+```
+
+| コマンド | 内容 |
+|:--|:--|
+| `npm run lint` | すべてのチェック |
+| `npm run lint -- books/my-book` | 1 冊だけ |
+| `npm run lint:fix` | 自動で直せる指摘（表記の統一など）を原稿に反映してからチェック（`make lint-fix` でも可） |
+| `npm run lint:text` | 表記・文章だけ |
+| `npm run lint:links` | リンク・参照だけ |
+| `npm run lint -- --no-external` | 外部 URL の確認を省く（オフラインのとき） |
+
+リンクチェックでは、ビルドと同じ Pandoc で原稿を解析します（`pandoc` が必要。場所は環境変数 `PANDOC` でも指定可）。
+
+### 結果の見方
+
+本ごと・チェックの種類ごとに、ファイル・行・列とともに表示し、最後にまとめを出します。
+
+```text
+📖 my-book（横書き・原稿 1 ファイル）
+  表記・文章     ✖ エラー 3 件
+    books/my-book/chapters/01-intro.md
+         3:14  ✖ サーバー => サーバ (自動修正可) [prh]
+         3:14  ✖ 同義語である「サーバ」と「サーバー」が利用されています [@textlint-ja/no-synonyms]
+         3:24  ✖ 行ない => 行い (自動修正可) [prh]
+  リンク・参照   ✖ エラー 2 件  外部 URL 0 件
+    books/my-book/chapters/01-intro.md
+          5:6  ✖ 参照先が見つかりません: @sec:deploy（{#sec:deploy} を付けた見出し・図・表・リストがありません）
+          7:8  ✖ 画像が見つかりません: images/architecture.png（books/my-book/ と books/my-book/images/ から探しました）
+
+────────────────────────────────────────────────────────
+まとめ
+  my-book                表記・文章 ✖ エラー 3 件   リンク・参照 ✖ エラー 2 件
+
+✖ エラー 5 件、警告 0 件
+```
+
+- **✖ エラー** … 直すべきもの。1 件でもあるとコマンドが失敗する（終了コード 1）
+- **⚠ 警告** … 文体の提案（一文に同じ助詞が続く、文が長いなど）や、外部サイトの一時的な不調など、判断を書き手にゆだねるもの。コマンドは成功する
+- `[ ]` の中はルール名。誤検出を抑えるときに使う（[後述](#誤検出を抑える)）
+
+サンプル原稿はエラー 0 件で通ります（文体の警告が数件出ます）。
+
+### チェックの内容とツール
+
+| 種類 | チェックすること | 使っているもの |
+|:--|:--|:--|
+| 表記ゆれ | 同じ本の中で同じ意味の語の書き方が混ざっていないか（サーバ／サーバー、行う／行なう など） | [@textlint-ja/textlint-rule-no-synonyms](https://github.com/textlint-ja/textlint-rule-no-synonyms)（Sudachi 同義語辞書） |
+| 表記ルール | 辞書で決めた表記になっているか（行なう → 行う、Javascript → JavaScript など）。全角の英字（ＥＰＵＢ）も検出 | [textlint-rule-prh](https://github.com/textlint-rule/textlint-rule-prh) + `lint/dict/*.yml`、textlint-rule-no-mixed-zenkaku-and-hankaku-alphabet |
+| ひらがなで書く語 | 形式名詞（事 → こと）・副詞（殆ど → ほとんど）・補助動詞（〜して下さい → ください） | textlint-rule-ja-hiragana-keishikimeishi / -fukushi / -hojodoushi |
+| 文章 | 文の長さ、読点の数、「ですます」と「である」の混在、二重否定、ら抜き言葉、句点の有無、括弧の対応 など | [textlint-rule-preset-ja-technical-writing](https://github.com/textlint-ja/textlint-rule-preset-ja-technical-writing) |
+| 空白 | 全角文字どうしの間の空白、感嘆符・疑問符の後の空白 など | [textlint-rule-preset-ja-spacing](https://github.com/textlint-ja/textlint-rule-preset-ja-spacing)（一部） |
+| 相互参照 | `@sec:` / `@fig:` / `@tbl:` / `@lst:` の参照先があるか、ID が章をまたいで重複していないか | `scripts/check-manuscript.mjs`（Pandoc で解析） |
+| 内部リンク | `[…](#id)` のリンク先の ID があるか。`[…](02-build.md)` のような章ファイルへのリンク（EPUB では切れる）がないか | 〃 |
+| 画像 | 参照している画像ファイルがあるか（`book.yaml` の表紙も）、Kindle で使える形式か | 〃 |
+| 外部 URL | ページがなくなっていないか（HTTP 404 / 410、ドメインなし、証明書エラーはエラー。403・タイムアウトなどは警告） | 〃（`lint/linkcheck.json` で除外・タイムアウトを設定） |
+
+**textlint を選んだ理由**: 日本語向けのルール（textlint-ja）が最も充実しており、技術書向けのプリセットや表記ゆれ検出、辞書による表記統一（prh）をそのまま組み合わせられるためです。RedPen なども候補ですが、Java が必要で、日本語のルールや辞書の選択肢が少なくなります。
+
+**Pandoc の記法への対応**: textlint は CommonMark として原稿を読むため、そのままでは `::: note` の囲みや `{#sec:id}` の属性、`{漢字|かんじ}` のルビ、`: キャプション` の表キャプションを文章と見なして誤検出します。`lint/textlint-plugin-pandoc` がこれらを検査の対象から外します（原稿のテキストは変えないので、位置がずれず `--fix` でも壊れません）。リンクの解析には、ビルドと同じ Pandoc を使っています。
+
+> **注意**: `npx textlint` で直接実行すると、このプラグインより標準の Markdown 処理が優先され、Pandoc の記法が誤検出されます。チェックは `npm run lint` で実行してください。
+
+### 表記ルールの辞書
+
+表記ルールは [prh](https://github.com/prh/prh) 形式の YAML 辞書に書きます。
+
+| ファイル | 内容 |
+|:--|:--|
+| `lint/dict/technical.yml` | 技術書に共通する一般的なルール（送り仮名、接続詞のひらがな、記号、製品名の大文字小文字など） |
+| `lint/dict/project.yml` | **プロジェクト独自のルール**。用語の統一やカタカナ語の長音など、この本（シリーズ）で決めた表記を書く |
+
+```yaml
+# lint/dict/project.yml に追加する例
+rules:
+  - expected: ログイン             # 正しい表記
+    pattern:                       # 誤りとして検出する表記（複数書ける）
+      - ログオン
+      - サインオン
+  - expected: GitHub Actions
+    pattern: /GitHub actions|Github Actions/   # /…/ で正規表現
+  - expected: 行$1                  # 正規表現の () は $1 で使える
+    pattern: /行な([わいうえお])/
+    specs:                         # 自己テスト（辞書を読み込むときに確かめられる）
+      - from: 行なう
+        to: 行う
+```
+
+- `pattern` を省略すると、`expected` の大文字小文字・全角半角の違いを検出します
+- 指摘は `npm run lint:fix` で `expected` の表記に直せます
+- カタカナ語の語末の長音は、サンプル原稿に合わせて省略する側（フォルダ・エディタ・フィルタ・サーバ）にしています。「フォルダー」のように長音を付けたい場合は、`project.yml` の該当ルールの `expected` と `pattern` を入れ替えてください
+
+### 本ごとの設定
+
+`books/<本>/textlint.json` を置くと、その本だけルートの `.textlintrc.json` に設定を重ねられます。辞書（`prh` の `rulePaths`）は置き換えではなく **追加** されます（パスは本のディレクトリから）。
+
+```json
+{
+  "rules": {
+    "preset-ja-technical-writing": {
+      "arabic-kanji-numbers": false,
+      "sentence-length": { "max": 120 }
+    },
+    "prh": { "rulePaths": ["dict.yml"] }
+  }
+}
+```
+
+縦書きサンプル（`books/vertical-sample/textlint.json`）では、縦書きの本で一般的な漢数字（「三つの段階」など）を許可するため、算用数字を求めるルールを切っています。
+
+### 誤検出を抑える
+
+| 方法 | 書き方 |
+|:--|:--|
+| 原稿の一部だけチェックを止める | `<!-- textlint-disable ルール名 -->` 〜 `<!-- textlint-enable ルール名 -->`（ルール名を省くと全ルール）。HTML のコメントなので EPUB では表示されない |
+| 特定の語句を常に許可する | `.textlintrc.json` の `filters.allowlist.allow` に文字列か `/正規表現/` を追加 |
+| 同義語の組み合わせを許可する | `.textlintrc.json` で `"@textlint-ja/no-synonyms": { "allows": ["ログイン", "サインイン"] }` |
+| ルールを切る・警告にする | `.textlintrc.json` で `false`、または `{ "severity": "warning" }` |
+| 外部 URL を確認しない | `lint/linkcheck.json` の `external.ignore` に正規表現を追加 |
+
+エラーと警告の分け方も `.textlintrc.json` の `severity` で決めています。文体の提案に近いルール（弱い表現、助詞の連続、文の長さ、読点の数、冗長な表現）は警告にしています。
+
 ## 縦書きの表示の工夫
 
 `layout.writing_mode: vertical` にすると、次の処理が行われます。
@@ -408,6 +554,12 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 
 ビルド結果は GitHub の「Actions」タブ → 該当の実行 → 「Artifacts」の `epub` からダウンロードできます。EPUBCheck でエラーがあるとジョブが失敗します。手動実行（workflow_dispatch）にも対応しています。
 
+`.github/workflows/lint.yml` は、同じタイミングで [原稿のチェック](#原稿のチェック)（`npm run lint`）を実行します。
+
+1. Node.js 22 と Pandoc（3.9）をセットアップし、`npm ci` でチェック用のツールを入れる
+2. `npm run lint` で全ての本の表記・文章とリンク・参照をチェック
+3. 指摘はプルリクエストの「Files changed」で該当行に注釈として表示される。エラーがあるとジョブが失敗する（警告だけなら成功）
+
 ## 設計上の判断（KDP ガイドラインに基づいて決めたこと）
 
 [Kindle Publishing Guidelines](https://kdp.amazon.co.jp/ja_JP/help/topic/G200645680)（Amazon が公開している Kindle 本の制作ガイドライン）と KDP ヘルプの内容に沿って、次のように決めました。ガイドラインは改訂されるため、出版前に最新版を確認してください。
@@ -479,3 +631,7 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | 表がはみ出す | 列を減らすか表を分割する。縦書きでは `tables: sideways` を使う |
 | 表紙の警告が出る | 1600×2560px・RGB の JPEG にする |
 | EPUBCheck が見つからない | `bash scripts/setup.sh` を実行するか、`EPUBCHECK_JAR=/path/to/epubcheck.jar` を設定 |
+| `textlint が見つかりません` | リポジトリのルートで `npm install` を実行 |
+| `npm run lint` で外部リンクが「接続できませんでした」 | 社内ネットワークなどで外に出られない。`npm run lint -- --no-external` で省略するか、`HTTPS_PROXY` を設定する（自動でプロキシを使う） |
+| `Error while loading rule 'prh': … spec failed` | 辞書の `specs` の結果が `to` と違う。`lint/dict/*.yml` のそのルールの `pattern` を見直す |
+| `npx textlint` だと `:::` やルビが指摘される | `npm run lint` を使う（[Pandoc の記法への対応](#チェックの内容とツール)） |

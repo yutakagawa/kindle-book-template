@@ -1,0 +1,33 @@
+{
+  "name": "kindle-book-template",
+  "private": true,
+  "description": "原稿の品質チェック（表記ゆれ・文章・リンク切れ）用のツール。EPUB のビルド自体は Python + Pandoc で行う",
+  "scripts": {
+    "lint": "node scripts/check-manuscript.mjs",
+    "lint:fix": "node scripts/check-manuscript.mjs --fix",
+    "lint:text": "node scripts/check-manuscript.mjs --only text",
+    "lint:links": "node scripts/check-manuscript.mjs --only links"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@textlint-ja/textlint-rule-no-synonyms": "^1.3.0",
+    "@textlint/config-loader": "^15.8.0",
+    "@textlint/kernel": "^15.8.0",
+    "@textlint/textlint-plugin-markdown": "^15.8.0",
+    "sudachi-synonyms-dictionary": "^20.0.0",
+    "textlint": "^15.8.0",
+    "textlint-filter-rule-allowlist": "^4.0.0",
+    "textlint-filter-rule-comments": "^1.3.0",
+    "textlint-plugin-pandoc": "file:lint/textlint-plugin-pandoc",
+    "textlint-rule-ja-hiragana-fukushi": "^1.3.0",
+    "textlint-rule-ja-hiragana-hojodoushi": "^1.1.0",
+    "textlint-rule-ja-hiragana-keishikimeishi": "^1.1.0",
+    "textlint-rule-no-mixed-zenkaku-and-hankaku-alphabet": "^1.0.1",
+    "textlint-rule-preset-ja-spacing": "^3.0.4",
+    "textlint-rule-preset-ja-technical-writing": "^12.0.2",
+    "textlint-rule-prh": "^6.1.1",
+    "yaml": "^2.9.1"
+  }
+}
