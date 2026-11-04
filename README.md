@@ -72,8 +72,10 @@ make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample
 │   ├── images.py              # 画像の Kindle 向け最適化（build.py から呼ばれる）
 │   ├── paperback.py           # ペーパーバック用の本文 PDF（build.py --paperback から呼ばれる）
 │   ├── validate.py            # EPUBCheck による検証（警告以上で失敗）
+│   ├── new-book.py            # 新しい本の雛形を対話形式で作る
 │   ├── check-manuscript.mjs   # 原稿のチェック（npm run lint）
 │   └── setup.sh               # ツールのインストール
+├── tests/                     # scripts/ の自動テスト（pytest と node --test）
 ├── templates/paperback.html   # ペーパーバック用 HTML のテンプレート（扉・目次・本文・奥付）
 ├── lint/                      # 原稿のチェックの設定
 │   ├── dict/technical.yml     #   技術書向けの表記ルール（辞書）
@@ -83,6 +85,7 @@ make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample
 ├── .github/
 │   ├── workflows/build.yml    # CI（ビルド + 縦書き・横書きの両方で検証）
 │   ├── workflows/lint.yml     # CI（原稿のチェック）
+│   ├── workflows/test.yml     # CI（scripts/ のテスト）
 │   └── actions/setup-tools/   # CI 用のツールのセットアップ
 ├── .textlintrc.json           # textlint のルール設定
 ├── package.json               # チェック用ツール・Vivliostyle（Node.js）
@@ -215,6 +218,16 @@ EPUBCheck 本体は警告があっても終了コード 0 を返すため、`scr
 基準は `make check FAIL_ON=usage`（もっとも厳しい）や `--fail-on error`（警告を許す）で変えられます。このテンプレートのサンプルは USAGE まで含めて 0 件です。
 
 ## 新しい本を作る
+
+`scripts/new-book.py` を実行すると、タイトル・著者名・縦書き/横書きを質問され、`books/<ディレクトリ名>/` に `book.yaml`（新しい uuid 入り）・章ファイルの雛形・`images/` が作られます。表紙は画像を用意するまで自動生成されます。
+
+```bash
+python3 scripts/new-book.py            # 対話形式で作る
+python3 scripts/new-book.py my-book --title "本のタイトル" --author "山田 太郎" --writing-mode vertical   # 質問なしで作る
+make book BOOK=books/my-book
+```
+
+サンプルをコピーして手で作る場合:
 
 ```bash
 cp -r books/horizontal-sample books/my-book     # 縦書きなら vertical-sample をコピー
@@ -462,7 +475,8 @@ paperback:
 | `5x8` / `5.06x7.81` / `5.25x8` / `5.5x8.5` / `6x9` / `6.14x9.21` / `6.69x9.61` / `7x10` / `7.44x9.69` / `7.5x9.25` / `8x10` / `8.25x6` / `8.25x8.25` / `8.5x8.5` / `8.5x11` / `a4` | インチ（幅×高さ）。`a4` は 8.27×11.69 | KDP の標準の判型 |
 | `a5` | 148×210mm | KDP では「カスタムの判型」に幅・高さ（インチ）を入力する（ビルド時に値を表示） |
 | `b6` | 128×182mm | 同上 |
-| `{width: …, height: …}` | 任意 | 幅 4〜8.5 インチ・高さ 6〜11.69 インチ（KDP のカスタム判型の範囲）。新書判・文庫判は幅が 4 インチ未満なので作れない |
+| `shinsho` | 103×182mm | 新書判。`a5` と同じくカスタムの判型 |
+| `{width: …, height: …}` | 任意 | 幅 4〜8.5 インチ・高さ 6〜11.69 インチ（KDP のカスタム判型の範囲）。文庫判（105×148mm）は高さが 6 インチ未満なので作れない |
 
 ### KDP の要件に合わせていること
 
@@ -930,6 +944,21 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
 1. Node.js 22 と Pandoc（3.9）をセットアップし、`npm ci` でチェック用のツールを入れる
 2. `npm run lint` で全ての本の表記・文章とリンク・参照をチェック
 3. 指摘はプルリクエストの「Files changed」で該当行に注釈として表示される。エラーがあるとジョブが失敗する（警告だけなら成功）
+
+`.github/workflows/test.yml` は、`scripts/` 以下のスクリプトの自動テスト（`tests/`）を実行します。
+
+| ジョブ | 内容 |
+|:--|:--|
+| `Python scripts (pytest)` | `build.py`（EPUB のビルド）・`cover.py`（表紙の生成）・`images.py`（画像の最適化）・`paperback.py`（ペーパーバック PDF）・`validate.py`（EPUBCheck の判定）のテスト |
+| `Manuscript check (node --test)` | `check-manuscript.mjs`（原稿のチェック）のテスト。一時的な本を作って実行し、指摘の内容・行番号・終了コードを確かめる |
+
+手元では次のように実行できます（`make test` で両方）。Pandoc・Vivliostyle・Chrome・EPUBCheck・日本語フォントが無い環境では、それらを使うテストはスキップされます。
+
+```bash
+pip install -r tests/requirements.txt
+python3 -m pytest                       # 時間のかかる PDF の組版を除くなら -m "not slow"
+node --test "tests/*.test.mjs"
+```
 
 ## 設計上の判断（KDP ガイドラインに基づいて決めたこと）
 
