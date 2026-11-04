@@ -346,6 +346,7 @@ class Layout:
     size: int
     lines: list[list[Atom]]
     widths: list[float]  # 各行の長さ（px）
+    cost: float = 0.0    # 不自然な改行と行の長さの不揃いの合計（小さいほど自然）
 
     @property
     def count(self) -> int:
@@ -483,8 +484,28 @@ def layout_at(el: Element, atoms: list[Atom], size: int, limit: float, stack: fl
         # 行数は少ないほうがよいが、不自然な改行を避けるためなら 1 行増やしてもよい
         cost = res[0] + (n - forced) * 1.5
         if best is None or cost < best[0]:
-            best = (cost, Layout(size, lines, widths))
+            best = (cost, Layout(size, lines, widths, cost))
     return best[1] if best else None
+
+
+# 自然な改行のために文字を小さくしてよい割合と、縮小 1 割あたりのコスト
+SHRINK_RANGE = 0.15
+SHRINK_COST = 10.0
+
+
+def prefer_natural_breaks(el: Element, atoms: list[Atom], best: Layout, limit: float, stack: float) -> Layout:
+    """最大の文字サイズでは不自然な位置（「作|る」など）でしか改行できないとき、少し小さくして自然に改行できるサイズを選ぶ。"""
+    # 小さくするほど単語は行に収まりやすくなるので、単語の途中で分けるのは best でも分けていたときだけになる
+    lowest = max(el.min_size, int(best.size * (1 - SHRINK_RANGE)))
+    chosen, chosen_score = best, best.cost
+    for size in range(best.size - 1, lowest - 1, -1):
+        lay = layout_at(el, atoms, size, limit, stack, split_words=True)
+        if lay is None:
+            continue
+        score = lay.cost + (1 - size / best.size) * SHRINK_COST
+        if score < chosen_score:
+            chosen, chosen_score = lay, score
+    return chosen
 
 
 def fit(el: Element, limit: float, stack: float, name: str, warnings: list[str]) -> Layout | None:
@@ -518,6 +539,7 @@ def fit(el: Element, limit: float, stack: float, name: str, warnings: list[str])
             best = split
     if best is None:
         raise CoverError(f"{name}が長すぎて表紙に収まりません: {el.text!r}")
+    best = prefer_natural_breaks(el, atoms, best, limit, stack)
     if best.size < el.min_size:
         warnings.append(f"{name}が長いため文字を小さくしました（{best.size}px）。サムネイルで読みにくい場合は短くするか cover_design で改行位置を指定してください")
     return best
