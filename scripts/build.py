@@ -521,8 +521,6 @@ def add_accessibility_metadata(opf: str, xhtml: list[str], cfg: dict, warnings: 
     欧州アクセシビリティ法（EAA）の対象となる EU のストアでの販売で求められる情報。
     適合（dcterms:conformsTo）は自動では宣言しない（確認した人が book.yaml で指定する）。
     """
-    if "schema:accessMode" in opf:
-        return opf
     if not isinstance(cfg, dict):
         raise BuildError("book.yaml の accessibility は key: value の形式で書いてください")
     unknown = set(cfg) - set(A11Y_KEYS)
@@ -560,6 +558,12 @@ def add_accessibility_metadata(opf: str, xhtml: list[str], cfg: dict, warnings: 
     }
     for key, value in cfg.items():
         values[key] = [str(v) for v in as_list(value)]
+
+    # pandoc 3.6 以降は独自の既定値（画像の有無にかかわらず alternativeText を宣言するなど）を書き込むので、
+    # それを取り除いてから、EPUB の中身から決めた値に置き換える（何度実行しても同じ結果になる）
+    props = "|".join(re.escape(p) for p in A11Y_KEYS.values())
+    opf = re.sub(r'[ \t]*<meta\b[^>]*\bproperty="(?:' + props + r')"[^>]*(?:/>|>.*?</meta>)[ \t]*\n?',
+                 "", opf, flags=re.S)
 
     lines = []
     for key, prop in A11Y_KEYS.items():

@@ -175,9 +175,27 @@ class AccessibilityMetadataTest(EpubBuildCase):
             self.assertEqual(build.main([str(self.book), "-o", str(self.dist)]), 1)
         self.assertIn("sumary", err.getvalue())
 
-    def test_existing_metadata_is_not_duplicated(self):
-        opf = '<package><metadata>\n    <meta property="schema:accessMode">textual</meta>\n  </metadata></package>'
-        self.assertEqual(build.add_accessibility_metadata(opf, [], {}, []), opf)
+    def test_pandoc_metadata_is_replaced_not_duplicated(self):
+        # pandoc 3.6 以降は画像が無くても alternativeText などを既定で書き込む
+        opf = (
+            '<package><metadata>\n'
+            '    <meta property="schema:accessMode">textual</meta>\n'
+            '    <meta property="schema:accessModeSufficient">textual</meta>\n'
+            '    <meta property="schema:accessibilityFeature">alternativeText</meta>\n'
+            '    <meta property="schema:accessibilityHazard">none</meta>\n'
+            '  </metadata></package>'
+        )
+        xhtml = ['<p>本文</p><img src="a.png" alt="" />']
+        once = build.add_accessibility_metadata(opf, xhtml, {}, [])
+        root = ET.fromstring(once)
+        def values(prop):
+            return [m.text for m in root.iter("meta") if m.get("property") == prop]
+        self.assertEqual(values("schema:accessMode"), ["textual", "visual"])
+        self.assertEqual(values("schema:accessModeSufficient"), ["textual,visual"])
+        self.assertNotIn("alternativeText", values("schema:accessibilityFeature"))
+        self.assertEqual(values("schema:accessibilityHazard"), ["none"])
+        # もう一度実行しても重複しない
+        self.assertEqual(build.add_accessibility_metadata(once, xhtml, {}, []), once)
 
 
 @unittest.skipUnless(have_pandoc() and have_pillow(), "pandoc 3.1 以上と Pillow が必要です")
@@ -202,10 +220,11 @@ class EpubImagesTest(EpubBuildCase):
 
         solid_image(self.book / "images" / "photo.jpg", (200, 200, 200), exif=gps_exif().tobytes())
         epub = self.build(chapter="# 章\n\n![写真](images/photo.jpg)\n")
-        jpgs = [n for n in epub.namelist() if n.startswith("EPUB/media/") and n.endswith(".jpg")
-                and "cover" not in n]
-        self.assertEqual(len(jpgs), 1)
-        data = epub.read(jpgs[0])
+        # 表紙画像のファイル名は pandoc のバージョンで変わるので、本文が参照している画像を調べる
+        chapter = next(n for n in epub.namelist() if re.search(r"ch\d+\.xhtml$", n))
+        srcs = re.findall(r'<img src="\.\./([^"]+)"', epub.read(chapter).decode("utf-8"))
+        self.assertEqual(len(srcs), 1)
+        data = epub.read("EPUB/" + srcs[0])
         self.assertFalse(images.jpeg_has_gps(data))
         self.assertNotIn(b"TestPhone", data)
 
