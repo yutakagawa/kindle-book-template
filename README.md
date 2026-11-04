@@ -72,6 +72,7 @@ make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample
 │   ├── images.py              # 画像の Kindle 向け最適化（build.py から呼ばれる）
 │   ├── paperback.py           # ペーパーバック用の本文 PDF（build.py --paperback から呼ばれる）
 │   ├── validate.py            # EPUBCheck による検証（警告以上で失敗）
+│   ├── new-book.py            # 新しい本の雛形を対話形式で作る
 │   ├── check-manuscript.mjs   # 原稿のチェック（npm run lint）
 │   └── setup.sh               # ツールのインストール
 ├── templates/paperback.html   # ペーパーバック用 HTML のテンプレート（扉・目次・本文・奥付）
@@ -215,6 +216,16 @@ EPUBCheck 本体は警告があっても終了コード 0 を返すため、`scr
 基準は `make check FAIL_ON=usage`（もっとも厳しい）や `--fail-on error`（警告を許す）で変えられます。このテンプレートのサンプルは USAGE まで含めて 0 件です。
 
 ## 新しい本を作る
+
+`scripts/new-book.py` を実行すると、タイトル・著者名・縦書き/横書きを質問され、`books/<ディレクトリ名>/` に `book.yaml`（新しい uuid 入り）・章ファイルの雛形・`images/` が作られます。表紙は画像を用意するまで自動生成されます。
+
+```bash
+python3 scripts/new-book.py            # 対話形式で作る
+python3 scripts/new-book.py my-book --title "本のタイトル" --author "山田 太郎" --writing-mode vertical   # 質問なしで作る
+make book BOOK=books/my-book
+```
+
+サンプルをコピーして手で作る場合:
 
 ```bash
 cp -r books/horizontal-sample books/my-book     # 縦書きなら vertical-sample をコピー
