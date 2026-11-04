@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<!--
+  KDP ペーパーバック用 HTML のテンプレート（scripts/paperback.py が pandoc に渡す）。
+  扉 → 目次 → 本文 → 奥付 の順に並べ、Vivliostyle で PDF に組版する。
+-->
+<html lang="$lang$" class="paperback $kbt.writing_mode$">
+<head>
+<meta charset="utf-8" />
+<title>$pagetitle$</title>
+$for(author)$
+<meta name="author" content="$author$" />
+$endfor$
+$for(css)$
+<link rel="stylesheet" href="$css$" />
+$endfor$
+$if(highlighting-css)$
+<style>
+$highlighting-css$
+</style>
+$endif$
+</head>
+<body>
+<section class="titlepage" id="titlepage">
+<h1 class="main">$title$</h1>
+$if(subtitle)$
+<p class="subtitle">$subtitle$</p>
+$endif$
+$for(author)$
+<p class="aut">$author$$pb.author_suffix$</p>
+$endfor$
+$if(pb.publisher)$
+<p class="publisher">$pb.publisher$</p>
+$endif$
+</section>
+$if(toc)$
+<nav id="toc" class="toc" role="doc-toc">
+<h1 class="toc-title">$toc-title$</h1>
+$table-of-contents$
+</nav>
+$endif$
+<main class="bodymatter">
+$body$
+</main>
+$if(pb.colophon)$
+<section class="colophon" id="colophon">
+<p class="colophon-title">$title$$if(subtitle)$　$subtitle$$endif$</p>
+<dl>
+$if(pb.date)$
+<dt>発行日</dt><dd>$pb.date$　初版発行</dd>
+$endif$
+$if(author)$
+<dt>著者</dt><dd>$for(author)$$author$$sep$、$endfor$</dd>
+$endif$
+$if(pb.publisher)$
+<dt>発行</dt><dd>$pb.publisher$</dd>
+$endif$
+$if(pb.isbn)$
+<dt>ISBN</dt><dd>$pb.isbn$</dd>
+$endif$
+</dl>
+$for(pb.notes)$
+<p class="colophon-note">$pb.notes$</p>
+$endfor$
+$if(pb.rights)$
+<p class="colophon-rights">$pb.rights$</p>
+$endif$
+</section>
+$endif$
+</body>
+</html>

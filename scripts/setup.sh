@@ -4,6 +4,7 @@
 #   - Pandoc        … Markdown → EPUB3 変換
 #   - Python 依存   … PyYAML（設定ファイルの読み込み）, Pillow（表紙サイズの確認・任意）
 #   - EPUBCheck     … EPUB の検証（Java が必要）。tools/ に展開する
+#   - npm パッケージ … textlint（原稿の品質チェック）・Vivliostyle（ペーパーバック PDF の組版）
 #
 # 使い方: bash scripts/setup.sh
 # バージョンは環境変数で変更できる: PANDOC_VERSION=3.9 EPUBCHECK_VERSION=5.3.0 bash scripts/setup.sh
@@ -96,4 +97,12 @@ else
   fi
 fi
 
-info "完了しました。'make' でビルド、'make check' でビルドと EPUBCheck による検証ができます"
+# ---- npm パッケージ（原稿の品質チェック・ペーパーバック PDF の組版に使う）--------
+if command -v npm >/dev/null 2>&1; then
+  info "npm パッケージ（textlint・Vivliostyle）をインストールします"
+  (cd "$ROOT" && npm install --no-fund --no-audit)
+else
+  warn "Node.js（npm）が見つかりません。'make lint' と 'make paperback' には Node.js 20 以上が必要です"
+fi
+
+info "完了しました。'make' でビルド、'make check' でビルドと EPUBCheck による検証、'make paperback' でペーパーバック用 PDF ができます"
