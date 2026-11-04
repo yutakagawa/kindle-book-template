@@ -21,6 +21,12 @@ jobs:
           pandoc-version: ${{ env.PANDOC_VERSION }}
           epubcheck-version: ${{ env.EPUBCHECK_VERSION }}
 
+      # 表紙の自動生成（cover_design）に使う日本語フォント
+      - name: Install Japanese fonts
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q fonts-noto-cjk
+
       # 警告が 1 件でもあれば失敗する（scripts/validate.py が EPUBCheck の JSON レポートを判定）
       - name: Build and validate EPUBs
         run: python3 scripts/build.py --all --check --fail-on warning --report-dir dist/reports
@@ -55,6 +61,12 @@ jobs:
         with:
           pandoc-version: ${{ env.PANDOC_VERSION }}
           epubcheck-version: ${{ env.EPUBCHECK_VERSION }}
+
+      # 表紙の自動生成（cover_design）に使う日本語フォント
+      - name: Install Japanese fonts
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q fonts-noto-cjk
 
       - name: Build and validate (${{ matrix.mode }})
         run: >-
