@@ -6,8 +6,10 @@
     python3 scripts/build.py --all                            # books/ 以下を全部ビルド
     python3 scripts/build.py books/my-book --check            # ビルド後に EPUBCheck で検証
     python3 scripts/build.py books/my-book --writing-mode horizontal   # 設定を一時的に上書き
+    python3 scripts/build.py books/my-book --no-optimize-images        # 画像を最適化せずに使う
 
 出力先は dist/<本のディレクトリ名>.epub（book.yaml の output で変更可）。
+画像は Kindle 向けに最適化した版を dist/.image-cache/<本のディレクトリ名>/ に作って使う（scripts/images.py）。
 """
 
 from __future__ import annotations
@@ -243,6 +245,7 @@ def build_book(book_dir: Path, args) -> Path:
 
     out_dir = Path(args.output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    optimize_images(book_dir, cfg, meta, out_dir, args, warnings)
     out_name = cfg.get("output") or f"{book_dir.name}.epub"
     if args.writing_mode and not cfg.get("output"):
         out_name = f"{book_dir.name}-{writing_mode}.epub"
@@ -276,6 +279,7 @@ def build_book(book_dir: Path, args) -> Path:
             "--split-level", "1",
             f"{highlight_flag}={theme}",
             "--resource-path", os.pathsep.join([str(book_dir), str(book_dir / "images")]),
+            "--lua-filter", str(FILTERS / "images.lua"),
             "--lua-filter", str(FILTERS / "linebreaks.lua"),
             "--lua-filter", str(FILTERS / "crossref.lua"),
             "--lua-filter", str(FILTERS / "admonition.lua"),
@@ -307,6 +311,35 @@ def build_book(book_dir: Path, args) -> Path:
     if args.check:
         run_epubcheck(output, args)
     return output
+
+
+def optimize_images(book_dir: Path, cfg: dict, meta: dict, out_dir: Path, args, warnings: list[str]) -> None:
+    """原稿の画像を Kindle 向けに最適化し、pandoc がその版を使うよう meta を書き換える。"""
+    images_cfg = cfg.get("images") or {}
+    if args.no_optimize_images or (isinstance(images_cfg, dict) and images_cfg.get("optimize") is False):
+        log("画像の最適化は無効です（元画像をそのまま使います）")
+        return
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        warnings.append("Pillow が無いため画像を最適化していません（pip install -r requirements.txt）")
+        return
+    import images
+
+    cover = Path(meta["cover-image"]) if meta.get("cover-image") else None
+    try:
+        report = images.optimize_book_images(book_dir, cfg, out_dir / ".image-cache", cover)
+    except ValueError as e:
+        raise BuildError(str(e))
+    if not report.results:
+        return
+    meta["kbt"]["images"] = report.mapping
+    if report.cover:
+        meta["cover-image"] = str(report.cover)
+    log(f"画像の最適化（{len(report.results)} 枚）:")
+    for line in images.format_report(report.results):
+        log("  " + line)
+    warnings.extend(report.warnings)
 
 
 def postprocess(epub: Path, writing_mode: str) -> None:
@@ -386,6 +419,7 @@ def main(argv=None) -> int:
     parser.add_argument("-o", "--output-dir", default=str(ROOT / "dist"), help="出力ディレクトリ（既定: dist）")
     parser.add_argument("--check", action="store_true", help="ビルド後に EPUBCheck で検証")
     parser.add_argument("--epubcheck-jar", help="epubcheck.jar のパス（EPUBCHECK_JAR 環境変数でも可）")
+    parser.add_argument("--no-optimize-images", action="store_true", help="画像を最適化せず元画像をそのまま使う")
     parser.add_argument("--pandoc", default=os.environ.get("PANDOC", "pandoc"), help="pandoc の実行ファイル")
     parser.add_argument("-v", "--verbose", action="store_true", help="pandoc のコマンドラインを表示")
     args = parser.parse_args(argv)

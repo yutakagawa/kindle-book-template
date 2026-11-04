@@ -6,6 +6,7 @@ Markdown で書いた原稿から、**Kindle Direct Publishing（KDP）にその
 - `book.yaml` の 1 行で **縦書き（右綴じ）と横書き（左綴じ）を切り替え**
 - 縦書きでも **コードブロック・表・英数字** が読みやすいように CSS を調整済み
 - 見出し／自動目次／シンタックスハイライト／表／図番号／囲み／脚注／ルビに対応
+- 原稿の画像をビルド時に **Kindle 向けに自動で最適化**（縮小・透過の除去・形式変換。元画像はそのまま）
 - **ISBN なし**で出版できるメタデータ（固定 UUID）を `book.yaml` で管理
 - **GitHub Actions** で push のたびに縦書き版・横書き版の両方をビルドし、EPUBCheck で検証
 
@@ -23,12 +24,13 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 4. [新しい本を作る](#新しい本を作る)
 5. [設定ファイル book.yaml](#設定ファイル-bookyaml)
 6. [原稿の書き方](#原稿の書き方)
-7. [縦書きの表示の工夫](#縦書きの表示の工夫)
-8. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
-9. [KDP へのアップロード手順](#kdp-へのアップロード手順)
-10. [GitHub Actions](#github-actions)
-11. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
-12. [トラブルシューティング](#トラブルシューティング)
+7. [画像の最適化](#画像の最適化)
+8. [縦書きの表示の工夫](#縦書きの表示の工夫)
+9. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
+10. [KDP へのアップロード手順](#kdp-へのアップロード手順)
+11. [GitHub Actions](#github-actions)
+12. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
+13. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -43,6 +45,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   │   └── images/            #   表紙・図版
 │   └── vertical-sample/       # 縦書き版サンプル（実用書: 小さな自動化のすすめ）
 ├── filters/                   # Pandoc の Lua フィルタ
+│   ├── images.lua             #   画像の参照先を最適化版に差し替える
 │   ├── linebreaks.lua         #   日本語の改行で空白が入らないようにする
 │   ├── crossref.lua           #   章番号・図/表/リスト番号・相互参照
 │   ├── admonition.lua         #   注意書きなどの囲み
@@ -55,6 +58,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   └── kindle.theme           #   シンタックスハイライトの配色（E-ink でも区別できる）
 ├── scripts/
 │   ├── build.py               # ビルドスクリプト（本体）
+│   ├── images.py              # 画像の Kindle 向け最適化（build.py から呼ばれる）
 │   └── setup.sh               # ツールのインストール
 ├── .github/workflows/build.yml
 ├── Makefile
@@ -69,6 +73,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 |:--|:--|:--|
 | [Pandoc](https://pandoc.org/) 3.1 以上（CI は 3.9 に固定） | Markdown → EPUB3 変換 | EPUB3 を直接出力でき、目次（nav / NCX）・脚注（`epub:type="noteref"`）・シンタックスハイライト・綴じ方向（`page-progression-direction`）に標準対応。Lua フィルタで日本語向けの拡張を足せる |
 | Python 3.9 以上 + PyYAML | ビルドスクリプト・設定ファイルの読み込み | macOS / Linux / Windows のどれでも動く |
+| [Pillow](https://python-pillow.org/)（推奨） | 画像の最適化・表紙の確認 | Python 製で追加のネイティブツール（ImageMagick など）が要らない。無い場合は最適化をスキップして元画像を使う |
 | [EPUBCheck](https://www.w3.org/publishing/epubcheck/)（任意・Java 11 以上） | EPUB の規格チェック | W3C 公式の検証ツール。KDP でのエラーを事前に減らせる |
 | [Kindle Previewer 3](https://kdp.amazon.co.jp/ja_JP/help/topic/G202131170)（任意） | Kindle での見え方の確認 | Amazon 公式。KDP と同じ変換エンジンで表示できる |
 
@@ -116,7 +121,8 @@ python3 scripts/build.py books/my-book -v         # 実行した pandoc のコ�
 | `--all` | `books/*/book.yaml` がある全ての本をビルド |
 | `--check` | ビルド後に EPUBCheck を実行（`tools/epubcheck*/epubcheck.jar` → `EPUBCHECK_JAR` → `epubcheck` コマンドの順に探す） |
 | `--writing-mode vertical\|horizontal` | `layout.writing_mode` を一時的に上書き |
-| `-o DIR` | 出力先（既定 `dist/`） |
+| `-o DIR` | 出力先（既定 `dist/`）。最適化した画像は `DIR/.image-cache/` に置かれる |
+| `--no-optimize-images` | 画像を最適化せず、元画像をそのまま使う |
 | `--pandoc PATH` | 使う pandoc（環境変数 `PANDOC` でも可） |
 
 ## 新しい本を作る
@@ -192,6 +198,7 @@ layout:
 | `layout.highlight_style` | – | ハイライト配色。pandoc の `.theme` ファイルか `tango` などの名前 |
 | `layout.vertical.code_blocks` / `tables` | – | 縦書き時のコード・表の表示方式（[後述](#縦書きの表示の工夫)） |
 | `layout.vertical.tcy_digits` | – | 何桁までの数字を縦中横にするか（既定 2） |
+| `images.*` | – | 画像の最適化の設定（[後述](#画像の最適化)） |
 | `css` | – | 追加の CSS ファイル（本のディレクトリからの相対パス） |
 | `fonts` | – | 埋め込むフォント（通常は不要。[設計上の判断](#設計上の判断kdp-ガイドラインに基づいて決めたこと)参照） |
 | `output` | – | 出力ファイル名（既定 `<ディレクトリ名>.epub`） |
@@ -265,7 +272,7 @@ const res = await fetch(url);
 ```
 
 - キャプションがある画像には「図1.1」のような番号が付く
-- 画像は `images/` に置く。JPEG（写真）か PNG（図）を使い、幅 1,200px 以上を目安にする
+- 画像は `images/` に置く。JPEG（写真）か PNG（図）を使い、幅 1,200px 以上を目安にする（大きすぎる画像や透過 PNG はビルド時に[自動で調整](#画像の最適化)される）
 - 段落の途中に置いた画像は図にならない（キャプション・番号なし）
 
 ### 相互参照
@@ -322,6 +329,69 @@ const res = await fetch(url);
 | `[ABC]{.sideways}` | 横倒し（縦書きのみ） |
 | `::: pagebreak` → `:::` | 改ページ |
 | `::: center` / `::: right` → `:::` | 中央揃え / 右（縦書きでは下）揃え |
+
+## 画像の最適化
+
+ビルドのたびに、本のディレクトリ内の画像（表紙を含む）を Kindle 向けに最適化してから EPUB に入れます。**原稿の書き方を変える必要はありません**。`![説明](images/photo.png)` と書けば、EPUB には `photo.png` の最適化版が入ります。
+
+- **元画像は変更しません。** 最適化版は `dist/.image-cache/<本のディレクトリ名>/` に、元と同じフォルダ構成で作られます
+- **変更のない画像は再処理しません。** 元画像の内容（SHA-256）と設定が前回と同じなら、キャッシュをそのまま使います。画像を差し替えたり設定を変えたりした分だけ処理し直し、消した画像の最適化版は削除します
+- キャッシュを作り直したいときは `make clean`（`dist/` ごと削除）
+
+### 行う処理
+
+| 対象 | 処理 | 理由 |
+|:--|:--|:--|
+| 幅 1600px・高さ 2560px を超える画像 | 縦横比を保って縮小（拡大はしない） | Kindle の画面に対して 300ppi 相当あれば十分。大きすぎる画像はファイルが重くなり、70% ロイヤリティの配信料（MB 単位）も増える |
+| 透過 PNG・透過 GIF | 白背景（`images.background`）に合成して透過を消す | Kindle Publishing Guidelines は透過を含む画像に非対応としている。ダークモードで透過部分が黒くなり、黒い線画が見えなくなる |
+| TIFF・BMP・WebP | 図（256 色以下）は PNG、写真は JPEG に変換 | Kindle は TIFF に非対応。KDP の本文画像は JPEG・PNG・GIF が基本 |
+| GIF | PNG に変換。アニメーション GIF は 1 フレーム目だけ | Kindle はアニメーション GIF に非対応 |
+| CMYK・16 ビット | 8 ビットの RGB（グレースケール画像はグレースケールのまま） | 端末は RGB で表示する。CMYK は色が大きく変わることがある |
+| EXIF の回転情報 | 回転を反映してからメタデータを削除 | 端末によっては回転情報が無視され、横倒しで表示されるため |
+| 5MB を超える画像 | JPEG は画質を段階的に下げる。PNG は JPEG に切り替える | 1 枚が大きすぎると変換・配信で問題になる（目安として 5MB を上限にしている） |
+| PNG（変更不要なもの） | 可逆圧縮で再圧縮し、小さくなったときだけ採用 | 画質を変えずにファイルを小さくする |
+| JPEG（変更不要なもの） | そのまま使う | 再圧縮すると画質が落ちるため |
+| 表紙（`cover`） | 1600×2560px 以内の JPEG にする | KDP の表紙の推奨（1600×2560px・RGB・JPEG） |
+| SVG | そのまま使う | 変換しない |
+
+幅が 600px（`images.min_width`）未満の画像は、Kindle で粗く見える可能性があるため警告が出ます（拡大はしません）。
+
+### ビルド時の一覧
+
+最適化の前後のサイズが一覧で表示されます（表示例）。
+
+```text
+[build] 画像の最適化（5 枚）:
+[build]   画像               最適化前           最適化後          削減  処理
+[build]   images/alpha.png  3000×1200    21KB   1600×640    37KB  -73%  透過→背景合成、縮小 3000×1200→1600×640
+[build]   images/cover.jpg  1600×2560   186KB  1600×2560   186KB    0%  キャッシュ: 変更なし
+[build]   images/photo.jpg  5000×3500  21.5MB  1600×1120   707KB   97%  縮小 5000×3500→1600×1120
+[build]   images/scan.tiff  1800×1200   6.2MB  1600×1067   3.7MB   40%  TIFF→PNG、縮小 1800×1200→1600×1067
+[build]   images/steps.png   1600×520    36KB   1600×520    36KB    0%  キャッシュ: 変更なし
+[build]   ----------------  ---------  ------  ---------  ------  ----  ------------------------------
+[build]   合計                         27.9MB              4.6MB   84%  3 枚を処理、2 枚はキャッシュ
+```
+
+「キャッシュ:」が付いた行は、前回の結果を再利用したものです。透過を消した画像は、白背景の分だけ最適化後のほうが大きくなることがあります（削減がマイナス）。
+
+### 設定（book.yaml）
+
+既定値のままで使えます。変えたいものだけ書いてください。
+
+```yaml
+images:
+  optimize: true          # false で最適化しない（コマンドの --no-optimize-images でも可）
+  max_width: 1600         # 本文の画像の最大幅（px）
+  max_height: 2560        # 本文の画像の最大高さ（px）
+  jpeg_quality: 85        # JPEG に書き出すときの画質（1〜95）
+  max_file_size_kb: 5120  # 1 枚あたりの上限（KB）
+  background: "#ffffff"   # 透過部分を合成する背景色
+  min_width: 600          # これより幅が小さい画像は警告する
+```
+
+画像の処理には Pillow を使います（`pip install -r requirements.txt` で入ります）。Pillow が無い場合は警告を出して最適化を省略し、元画像をそのまま使います。
+
+> **注記:** このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の数値は、ほかのサイトに引用されていた Kindle Publishing Guidelines の記述（画像は表示サイズに対して 300ppi 相当、72ppi 未満は変換に失敗する、透過画像・TIFF・アニメーション GIF は非対応）と KDP ヘルプの表紙の推奨値をもとに決めています。1 枚あたり 5MB の上限は公式の数値として確認できなかったため、安全側の目安です。出版前に最新の [Kindle Publishing Guidelines](https://kdp.amazon.co.jp/ja_JP/help/topic/G200645680) を確認してください。
 
 ## 縦書きの表示の工夫
 
@@ -478,4 +548,6 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | 縦書きでコードが切れる | `layout.vertical.code_blocks` を `sideways` に戻すか、コードを短く分割する |
 | 表がはみ出す | 列を減らすか表を分割する。縦書きでは `tables: sideways` を使う |
 | 表紙の警告が出る | 1600×2560px・RGB の JPEG にする |
+| 画像の変更が EPUB に反映されない | `make clean` で `dist/.image-cache/` を消してビルドし直す |
+| `Pillow が無いため画像を最適化していません` | `pip install -r requirements.txt` |
 | EPUBCheck が見つからない | `bash scripts/setup.sh` を実行するか、`EPUBCHECK_JAR=/path/to/epubcheck.jar` を設定 |
