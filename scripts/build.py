@@ -239,14 +239,27 @@ def build_book(book_dir: Path, args) -> Path:
             raise BuildError(f"原稿が見つかりません: {c}")
 
     warnings: list[str] = []
-    meta = build_metadata(cfg, book_dir, writing_mode, warnings)
-
     out_dir = Path(args.output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     out_name = cfg.get("output") or f"{book_dir.name}.epub"
     if args.writing_mode and not cfg.get("output"):
         out_name = f"{book_dir.name}-{writing_mode}.epub"
     output = out_dir / out_name
+
+    # cover_design があれば表紙を生成し（dist/<名前>-cover.jpg）、EPUB の表紙として使う
+    if str(ROOT / "scripts") not in sys.path:
+        sys.path.insert(0, str(ROOT / "scripts"))
+    from cover import CoverError, design_enabled, generate_book_cover
+    if design_enabled(cfg):
+        try:
+            cover_path = generate_book_cover(book_dir, cfg, output.with_name(output.stem + "-cover.jpg"),
+                                             writing_mode, warnings)
+        except CoverError as e:
+            raise BuildError(f"表紙を生成できません: {e}")
+        log(f"表紙を生成しました: {cover_path.name}")
+        cfg = {**cfg, "cover": str(cover_path)}
+
+    meta = build_metadata(cfg, book_dir, writing_mode, warnings)
 
     ver = pandoc_version(args.pandoc)
     theme = layout.get("highlight_style") or str(STYLES / "kindle.theme")

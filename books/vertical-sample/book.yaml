@@ -31,6 +31,15 @@ uuid: 0b7e9d4c-5a61-4f2e-8c3d-7e6f5a4b3c21
 # ---- 表紙 ----
 # KDP 推奨: 高さ 2560 × 幅 1600 ピクセル（縦横比 1.6:1）、JPEG、RGB。
 cover: images/cover.jpg
+# 表紙を自動生成する場合は、下の cover_design のコメントを外します（cover より優先されます）。
+# ビルドのたびに title / subtitle / author から dist/<名前>-cover.jpg を作り、EPUB に埋め込みます。
+# cover_design:
+#   style: auto                  # auto（layout.writing_mode に合わせる）/ vertical / horizontal
+#   colors: ["#f7f2e8", "#e8dcc6"]   # 1 色なら単色、2 色以上ならグラデーション
+#   gradient: vertical             # vertical / horizontal / diagonal / radial
+#   # background: images/cover-bg.jpg   # 背景画像（指定すると colors の代わりに使う）
+#   # font: serif                  # serif（明朝）/ sans（ゴシック）/ フォントファイルのパス
+#   # author_suffix: " 著"
 
 # ---- 原稿（この順番で 1 冊になります。省略すると chapters/*.md をファイル名順） ----
 chapters:

@@ -22,13 +22,14 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 3. [ビルド方法](#ビルド方法)
 4. [新しい本を作る](#新しい本を作る)
 5. [設定ファイル book.yaml](#設定ファイル-bookyaml)
-6. [原稿の書き方](#原稿の書き方)
-7. [縦書きの表示の工夫](#縦書きの表示の工夫)
-8. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
-9. [KDP へのアップロード手順](#kdp-へのアップロード手順)
-10. [GitHub Actions](#github-actions)
-11. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
-12. [トラブルシューティング](#トラブルシューティング)
+6. [表紙の自動生成](#表紙の自動生成)
+7. [原稿の書き方](#原稿の書き方)
+8. [縦書きの表示の工夫](#縦書きの表示の工夫)
+9. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
+10. [KDP へのアップロード手順](#kdp-へのアップロード手順)
+11. [GitHub Actions](#github-actions)
+12. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
+13. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -55,6 +56,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   └── kindle.theme           #   シンタックスハイライトの配色（E-ink でも区別できる）
 ├── scripts/
 │   ├── build.py               # ビルドスクリプト（本体）
+│   ├── cover.py               # 表紙画像の自動生成
 │   └── setup.sh               # ツールのインストール
 ├── .github/workflows/build.yml
 ├── Makefile
@@ -184,6 +186,7 @@ layout:
 | `isbn` | – | ISBN（10 桁 / 13 桁）。あれば識別子は ISBN になる |
 | `uuid` | 推奨 | ISBN が無い場合の識別子。**本ごとに固定**。省略するとタイトルと著者から生成（警告が出る） |
 | `cover` | 推奨 | 表紙画像。比率やサイズが KDP の推奨から外れると警告が出る |
+| `cover_design` | – | 書いておくと表紙を自動生成して使う（`cover` より優先）。[表紙の自動生成](#表紙の自動生成)参照 |
 | `chapters` | – | 原稿の順番。省略すると `chapters/*.md` をファイル名順 |
 | `layout.writing_mode` | – | `horizontal`（既定）か `vertical` |
 | `layout.toc_depth` | – | 目次に載せる見出しの深さ（既定 2 = 節まで） |
@@ -195,6 +198,97 @@ layout:
 | `css` | – | 追加の CSS ファイル（本のディレクトリからの相対パス） |
 | `fonts` | – | 埋め込むフォント（通常は不要。[設計上の判断](#設計上の判断kdp-ガイドラインに基づいて決めたこと)参照） |
 | `output` | – | 出力ファイル名（既定 `<ディレクトリ名>.epub`） |
+
+## 表紙の自動生成
+
+`scripts/cover.py` は、`book.yaml` のタイトル・サブタイトル・著者名から **KDP の推奨値どおりの表紙画像** を作ります。背景は単色・グラデーション・任意の画像から選べ、縦書き（右上から縦組み）と横書き（中央揃えの横組み）の 2 種類のデザインがあります。
+
+### 使い方
+
+`book.yaml` に `cover_design` を書くと、**ビルドのたびに表紙が作り直され、EPUB の表紙として自動で埋め込まれます**（`cover` を書いていても、こちらが優先されます）。
+
+```yaml
+cover_design: {}          # これだけでも既定のデザインで生成する
+```
+
+```bash
+make book BOOK=books/my-book
+# → dist/my-book.epub と dist/my-book-cover.jpg（KDP に別途アップロードする表紙）
+```
+
+表紙だけを作る・試すときは、スクリプトを直接実行します（`cover_design` が無い本でも使えます）。
+
+```bash
+python3 scripts/cover.py books/my-book                     # → dist/my-book-cover.jpg
+python3 scripts/cover.py --all                             # books/ 以下の全ての本
+python3 scripts/cover.py books/my-book --style vertical    # デザインを一時的に切り替え
+python3 scripts/cover.py books/my-book --background photo.jpg -o cover.jpg
+python3 scripts/cover.py books/my-book -o cover.tif        # TIFF で保存
+```
+
+### 設定（cover_design）
+
+```yaml
+cover_design:
+  style: auto                     # auto（layout.writing_mode に合わせる）/ vertical / horizontal
+  colors: ["#14213d", "#2c4f7c"]  # 1 色なら単色、2 色以上ならグラデーション
+  gradient: diagonal              # vertical / horizontal / diagonal / radial
+  background: images/cover-bg.jpg # 背景画像（任意）。指定すると colors の代わりに使う
+  overlay: 0.35                   # 背景画像を暗くする割合（0〜1）。文字を読みやすくする
+  text_color: auto                # auto = 背景の明るさから白か黒を選ぶ。"#ffffff" なども可
+  accent_color: "#e2b450"         # 飾り罫の色
+  font: sans                      # serif（明朝）/ sans（ゴシック）/ フォントファイルのパス
+  title: "Markdownで作る\nKindle技術書"   # 表紙だけの書き方（\n で改行位置を指定）
+  author_suffix: " 著"
+```
+
+| キー | 既定 | 説明 |
+|:--|:--|:--|
+| `style` | `auto` | `vertical`（縦書き）/ `horizontal`（横書き）。`auto` は `layout.writing_mode`（`--writing-mode` で上書きしたときはその値）に合わせる |
+| `colors` | デザインごと | 背景色。縦書きは生成り色、横書きは紺のグラデーション |
+| `gradient` | デザインごと | グラデーションの向き |
+| `background` | – | 背景画像（本のディレクトリからの相対パス）。縦横比が違う場合は中央を基準に切り抜く。`background_position: top` などで切り抜く位置を変えられる |
+| `overlay` / `overlay_color` | `0.35` / 黒 | 背景画像に重ねる色と濃さ |
+| `shadow` | 背景画像のときだけ `true` | 文字に影を付ける |
+| `text_color` / `accent_color` | `auto` / デザインごと | 文字と飾り罫の色 |
+| `decoration` | `true` | 飾り罫（横書きはタイトル下の線、縦書きは枠と縦線）を描くか |
+| `font` | 縦書き `serif`・横書き `sans` | 全体のフォント。`title_font` / `subtitle_font` / `author_font` で個別にも指定できる |
+| `title` / `subtitle` / `author` | `book.yaml` の値 | 表紙だけ表記を変えたいとき。`subtitle: ""` でサブタイトルを出さない。複数の著者は「・」でつなぐ |
+| `author_suffix` | – | 著者名の後ろに付ける文字（`" 著"` など） |
+| `width` / `height` | `1600` / `2560` | 通常は変更不要 |
+
+### 文字の配置（はみ出さないための処理）
+
+- タイトル・サブタイトル・著者名はそれぞれ決まった枠に置き、**枠に収まる最大の文字サイズ**を自動で選ぶ。長い文字列は自動で改行し、それでも収まらなければ縮小する
+- 改行は **禁則処理**（句読点・閉じ括弧・小書きの仮名・長音を行頭に置かない、開き括弧を行末に置かない）をしたうえで、行の長さがなるべく揃い、単語の途中（「自動｜化」「作｜る」など）で切れにくい位置を選ぶ。英単語は途中で切らない
+- 改行位置を自分で決めたいときは、`cover_design.title` などに `\n` を入れる
+- 文字が小さくなりすぎた（サムネイルで読みにくい）ときは警告が出る。枠にどうしても収まらないときはエラーになる
+- 縦書きでは、フォントの縦書き用字形（OpenType の `vert`）で句読点・括弧・長音・小書きの仮名を正しい向き・位置にし、2 桁までの数字と 1 文字の英字は縦中横、それ以外の英単語は横倒しにする（Pillow が libraqm なしの場合は回転・位置ずらしで近似し、警告が出る）
+
+### フォント
+
+日本語フォントは自動で探します（明朝: Noto Serif CJK JP → 源ノ明朝 → BIZ UD明朝 → ヒラギノ明朝 → 游明朝 → IPAex明朝 …、ゴシック: Noto Sans CJK JP → 源ノ角ゴシック → BIZ UDゴシック → ヒラギノ角ゴシック → 游ゴシック → メイリオ → IPAexゴシック …）。タイトルは太字、そのほかは中くらいの太さを選びます。
+
+| OS | 必要な作業 |
+|:--|:--|
+| macOS / Windows | 不要（ヒラギノ・游書体などの標準フォントを使う） |
+| Ubuntu / Debian / WSL | `sudo apt install fonts-noto-cjk` |
+
+市販のフォントなどを使うときは `font: fonts/MyFont-Bold.otf` のようにパスを書きます（`.ttc` の場合は `font: {path: ..., index: 1}` で番号を指定）。**表紙に使うフォントのライセンスが商用の画像に使えるものか確認してください**（Noto CJK・IPA フォントは使えます）。
+
+### 出力形式（KDP の推奨値に合わせたこと）
+
+| 項目 | 値 | 根拠（KDP ヘルプ「電子書籍の表紙の作成」） |
+|:--|:--|:--|
+| サイズ | 幅 1600 × 高さ 2560 px | 理想のサイズは高さ 2,560 × 幅 1,600 px（高さ:幅 = 1.6:1）。最小は高さ 1,000 × 幅 625 px、最大 10,000 px |
+| 形式 | JPEG（品質 92、色差の間引きなしで文字をくっきりさせる）。`-o *.tif` で TIFF | 受け付ける形式は JPEG と TIFF |
+| 色 | RGB（sRGB の ICC プロファイルを埋め込む） | RGB が必要（CMYK は不可） |
+| 解像度 | 300 ppi | 推奨の解像度は 300 ppi 以上 |
+| ファイルサイズ | 50MB を超えたらエラー（通常は 1MB 未満） | 50MB 以下 |
+
+KDP ではタイトル・著者名が書誌情報と一致していることが求められるため、表紙の文字は `book.yaml` の値をそのまま使います（表記を変えるときは KDP の入力欄とも合わせてください）。EPUB には JPEG を埋め込みます（EPUB の表紙に TIFF は使えないため）。
+
+> このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の値は KDP ヘルプの検索結果と既知の内容に基づいています。アップロード前に [電子書籍の表紙の作成（KDP ヘルプ）](https://kdp.amazon.co.jp/ja_JP/help/topic/G6GTK3T3NUHKLEFX) で最新の値を確認してください。
 
 ## 原稿の書き方
 
@@ -386,7 +480,7 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
    - 出版に関して必要な権利: 自分が著作権を持っていれば「私は著作権を所有しており…」を選択
 3. **電子書籍のコンテンツ**
    - 原稿: 「電子書籍の原稿をアップロード」で `dist/*.epub` を選択。DRM の有無を選ぶ
-   - 表紙: 「表紙をアップロード」で表紙画像（`images/cover.jpg` と同じもの、1600×2560px の JPEG 推奨）を選択
+   - 表紙: 「表紙をアップロード」で表紙画像（`images/cover.jpg` と同じもの、1600×2560px の JPEG 推奨）を選択。[自動生成](#表紙の自動生成)した場合は `dist/<名前>-cover.jpg`
    - AI 生成コンテンツの有無を回答する
    - 「プレビューアーを起動」で表示を確認（縦書きの本が右綴じになっているか）
    - ISBN: **入力不要**（KDP が ASIN を割り当てる。ISBN を持っている場合のみ入力）
@@ -478,4 +572,6 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | 縦書きでコードが切れる | `layout.vertical.code_blocks` を `sideways` に戻すか、コードを短く分割する |
 | 表がはみ出す | 列を減らすか表を分割する。縦書きでは `tables: sideways` を使う |
 | 表紙の警告が出る | 1600×2560px・RGB の JPEG にする |
+| `日本語フォントが見つかりません` | `sudo apt install fonts-noto-cjk`（Linux）、または `cover_design.font` にフォントファイルのパスを書く |
+| 表紙の文字が小さい・改行位置が不自然 | `cover_design.title` などに `\n` を入れて改行位置を指定するか、表記を短くする |
 | EPUBCheck が見つからない | `bash scripts/setup.sh` を実行するか、`EPUBCHECK_JAR=/path/to/epubcheck.jar` を設定 |
