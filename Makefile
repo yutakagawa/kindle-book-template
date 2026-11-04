@@ -5,7 +5,7 @@ VALIDATE := $(PYTHON) scripts/validate.py
 # EPUBCheck で失敗にする重大度: fatal / error / warning（既定）/ info / usage
 FAIL_ON  ?= warning
 
-.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book clean setup
+.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book test test-python test-node clean setup
 
 all: build
 
@@ -57,6 +57,15 @@ paperback-modes:
 ## 特定の本の PDF: make paperback-book BOOK=books/my-book
 paperback-book:
 	$(BUILD) --paperback $(BOOK)
+
+## scripts/ のテスト（tests/）。先に pip install -r tests/requirements.txt と npm install が必要
+test: test-python test-node
+
+test-python:
+	$(PYTHON) -m pytest
+
+test-node:
+	node --test "tests/*.test.mjs"
 
 setup:
 	bash scripts/setup.sh
