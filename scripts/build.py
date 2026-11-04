@@ -7,9 +7,11 @@
     python3 scripts/build.py books/my-book --check            # ビルド後に EPUBCheck で検証（警告以上で失敗）
     python3 scripts/build.py books/my-book --writing-mode horizontal   # 設定を一時的に上書き
     python3 scripts/build.py books/my-book --no-optimize-images        # 画像を最適化せずに使う
+    python3 scripts/build.py books/my-book --paperback                 # KDP ペーパーバック用の本文 PDF を作る
 
 出力先は dist/<本のディレクトリ名>.epub（book.yaml の output で変更可）。
 画像は Kindle 向けに最適化した版を dist/.image-cache/<本のディレクトリ名>/ に作って使う（scripts/images.py）。
+--paperback では dist/<本のディレクトリ名>-paperback.pdf を作る（scripts/paperback.py）。
 """
 
 from __future__ import annotations
@@ -240,6 +242,8 @@ def build_book(book_dir: Path, args) -> Path:
     warnings: list[str] = []
     out_dir = Path(args.output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    if args.paperback:
+        return build_paperback(book_dir, cfg, chapters, writing_mode, out_dir, args, warnings)
     out_name = cfg.get("output") or f"{book_dir.name}.epub"
     if args.writing_mode and not cfg.get("output"):
         out_name = f"{book_dir.name}-{writing_mode}.epub"
@@ -262,11 +266,6 @@ def build_book(book_dir: Path, args) -> Path:
     optimize_images(book_dir, cfg, meta, out_dir, args, warnings)
 
     ver = pandoc_version(args.pandoc)
-    theme = layout.get("highlight_style") or str(STYLES / "kindle.theme")
-    if theme.endswith(".theme") and not Path(theme).is_absolute():
-        candidate = book_dir / theme
-        theme = str(candidate if candidate.exists() else ROOT / theme)
-    highlight_flag = "--syntax-highlighting" if ver >= (3, 8) else "--highlight-style"
 
     css = [STYLES / "base.css", STYLES / f"{writing_mode}.css"]
     for extra in as_list(cfg.get("css")):
@@ -280,21 +279,10 @@ def build_book(book_dir: Path, args) -> Path:
         # JSON は YAML としても有効。日本語をそのまま書き出す
         meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        cmd = [
-            args.pandoc,
-            "--from", "markdown+east_asian_line_breaks+ascii_identifiers+bracketed_spans+fenced_divs+footnotes+pipe_tables+grid_tables+implicit_figures+link_attributes",
+        cmd = pandoc_common_args(args.pandoc, ver, book_dir, layout) + [
             "--to", "epub3",
             "--metadata-file", str(meta_file),
-            "--toc", "--toc-depth", str(layout.get("toc_depth", 2)),
             "--split-level", "1",
-            f"{highlight_flag}={theme}",
-            "--resource-path", os.pathsep.join([str(book_dir), str(book_dir / "images")]),
-            "--lua-filter", str(FILTERS / "images.lua"),
-            "--lua-filter", str(FILTERS / "linebreaks.lua"),
-            "--lua-filter", str(FILTERS / "crossref.lua"),
-            "--lua-filter", str(FILTERS / "admonition.lua"),
-            "--lua-filter", str(FILTERS / "ruby.lua"),
-            "--lua-filter", str(FILTERS / "vertical.lua"),
             "--epub-title-page=true",
             "-o", str(output),
         ]
@@ -320,6 +308,56 @@ def build_book(book_dir: Path, args) -> Path:
 
     if args.check:
         run_epubcheck(output, args)
+    return output
+
+
+def pandoc_common_args(pandoc: str, ver: tuple[int, ...], book_dir: Path, layout: dict) -> list[str]:
+    """EPUB とペーパーバックで共通の pandoc の引数（入力形式・目次・ハイライト・Lua フィルタ）。"""
+    theme = layout.get("highlight_style") or str(STYLES / "kindle.theme")
+    if theme.endswith(".theme") and not Path(theme).is_absolute():
+        candidate = book_dir / theme
+        theme = str(candidate if candidate.exists() else ROOT / theme)
+    highlight_flag = "--syntax-highlighting" if ver >= (3, 8) else "--highlight-style"
+    return [
+        pandoc,
+        "--from", "markdown+east_asian_line_breaks+ascii_identifiers+bracketed_spans+fenced_divs+footnotes+pipe_tables+grid_tables+implicit_figures+link_attributes",
+        "--toc", "--toc-depth", str(layout.get("toc_depth", 2)),
+        f"{highlight_flag}={theme}",
+        "--resource-path", os.pathsep.join([str(book_dir), str(book_dir / "images")]),
+        "--lua-filter", str(FILTERS / "images.lua"),
+        "--lua-filter", str(FILTERS / "linebreaks.lua"),
+        "--lua-filter", str(FILTERS / "crossref.lua"),
+        "--lua-filter", str(FILTERS / "admonition.lua"),
+        "--lua-filter", str(FILTERS / "ruby.lua"),
+        "--lua-filter", str(FILTERS / "vertical.lua"),
+    ]
+
+
+def build_paperback(book_dir: Path, cfg: dict, chapters: list[Path], writing_mode: str, out_dir: Path,
+                    args, warnings: list[str]) -> Path:
+    """KDP ペーパーバック用の本文 PDF を作る（詳細は scripts/paperback.py）。"""
+    if str(ROOT / "scripts") not in sys.path:
+        sys.path.insert(0, str(ROOT / "scripts"))
+    import paperback
+
+    pb = cfg.get("paperback") or {}
+    out_name = (pb.get("output") if isinstance(pb, dict) else None) or f"{book_dir.name}-paperback.pdf"
+    if args.writing_mode and not (isinstance(pb, dict) and pb.get("output")):
+        out_name = f"{book_dir.name}-{writing_mode}-paperback.pdf"
+    output = out_dir / out_name
+    # 表紙は PDF に入れない（KDP では本文と表紙を別々の PDF でアップロードする）
+    meta = build_metadata({k: v for k, v in cfg.items() if k != "cover"}, book_dir, writing_mode,
+                          [])  # EPUB の表紙・識別子の警告は紙の本には関係ないので捨てる
+    ver = pandoc_version(args.pandoc)
+    log(f"{book_dir.name}: {writing_mode} でペーパーバック用 PDF を作ります（pandoc {'.'.join(map(str, ver))}）")
+    try:
+        paperback.build_paperback(book_dir, cfg, meta, chapters, writing_mode, output, args,
+                                  pandoc_common_args(args.pandoc, ver, book_dir, cfg.get("layout") or {}), warnings)
+    except paperback.PaperbackError as e:
+        raise BuildError(str(e))
+    for w in warnings:
+        log("警告: " + w)
+    log(f"出力: {output.relative_to(Path.cwd()) if output.is_relative_to(Path.cwd()) else output}")
     return output
 
 
@@ -412,7 +450,7 @@ def run_epubcheck(epub: Path, args) -> None:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Markdown 原稿から KDP 用 EPUB3 を生成します")
+    parser = argparse.ArgumentParser(description="Markdown 原稿から KDP 用 EPUB3（--paperback でペーパーバック用 PDF）を生成します")
     parser.add_argument("books", nargs="*", help="本のディレクトリ（book.yaml がある場所）")
     parser.add_argument("--all", action="store_true", help="books/ 以下の全ての本をビルド")
     parser.add_argument("--writing-mode", choices=["vertical", "horizontal"], help="book.yaml の layout.writing_mode を一時的に上書き")
@@ -423,6 +461,10 @@ def main(argv=None) -> int:
     parser.add_argument("--report-dir", help="--check の JSON レポートを保存するディレクトリ")
     parser.add_argument("--epubcheck-jar", help="epubcheck.jar のパス（EPUBCHECK_JAR 環境変数でも可）")
     parser.add_argument("--no-optimize-images", action="store_true", help="画像を最適化せず元画像をそのまま使う")
+    parser.add_argument("--paperback", action="store_true",
+                        help="EPUB の代わりに KDP ペーパーバック用の本文 PDF を作る（判型などは book.yaml の paperback）")
+    parser.add_argument("--browser", help="--paperback で使う Chrome / Chromium の実行ファイル（VIVLIOSTYLE_BROWSER 環境変数でも可）")
+    parser.add_argument("--keep-html", action="store_true", help="--paperback の組版用 HTML を dist/.paperback/ に残す")
     parser.add_argument("--pandoc", default=os.environ.get("PANDOC", "pandoc"), help="pandoc の実行ファイル")
     parser.add_argument("-v", "--verbose", action="store_true", help="pandoc のコマンドラインを表示")
     args = parser.parse_args(argv)

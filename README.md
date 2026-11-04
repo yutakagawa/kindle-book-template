@@ -11,9 +11,11 @@ Markdown で書いた原稿から、**Kindle Direct Publishing（KDP）にその
 - **EPUBCheck** で検証し、エラーだけでなく**警告が 1 件でもあれば失敗**にする（`make check`）
 - **GitHub Actions** で push のたびに全ての本を縦書き版・横書き版の両方でビルドし、EPUBCheck で検証
 - `npm run lint` で **表記ゆれ・文章・リンク切れ** をまとめてチェック（[原稿のチェック](#原稿のチェック)）
+- 同じ原稿から **KDP ペーパーバック（紙の本）の本文 PDF** も作れる。判型・余白・ノンブル・裁ち落としは KDP の要件どおり、縦書き・横書きの両方に対応（`make paperback`。[ペーパーバック（紙の本）](#ペーパーバック紙の本)）
 
 ```bash
 make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
+make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample-paperback.pdf
 ```
 
 ---
@@ -27,15 +29,16 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 5. [新しい本を作る](#新しい本を作る)
 6. [設定ファイル book.yaml](#設定ファイル-bookyaml)
 7. [表紙の自動生成](#表紙の自動生成)
-8. [原稿の書き方](#原稿の書き方)
-9. [画像の最適化](#画像の最適化)
-10. [原稿のチェック](#原稿のチェック)
-11. [縦書きの表示の工夫](#縦書きの表示の工夫)
-12. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
-13. [KDP へのアップロード手順](#kdp-へのアップロード手順)
-14. [GitHub Actions](#github-actions)
-15. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
-16. [トラブルシューティング](#トラブルシューティング)
+8. [ペーパーバック（紙の本）](#ペーパーバック紙の本)
+9. [原稿の書き方](#原稿の書き方)
+10. [画像の最適化](#画像の最適化)
+11. [原稿のチェック](#原稿のチェック)
+12. [縦書きの表示の工夫](#縦書きの表示の工夫)
+13. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
+14. [KDP へのアップロード手順](#kdp-へのアップロード手順)
+15. [GitHub Actions](#github-actions)
+16. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
+17. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -61,14 +64,17 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   ├── base.css               #   共通スタイル
 │   ├── horizontal.css         #   横書き用
 │   ├── vertical.css           #   縦書き用
+│   ├── print.css              #   ペーパーバック（紙の本）用
 │   └── kindle.theme           #   シンタックスハイライトの配色（E-ink でも区別できる）
 ├── scripts/
 │   ├── build.py               # ビルドスクリプト（本体）
 │   ├── cover.py               # 表紙画像の自動生成
 │   ├── images.py              # 画像の Kindle 向け最適化（build.py から呼ばれる）
+│   ├── paperback.py           # ペーパーバック用の本文 PDF（build.py --paperback から呼ばれる）
 │   ├── validate.py            # EPUBCheck による検証（警告以上で失敗）
 │   ├── check-manuscript.mjs   # 原稿のチェック（npm run lint）
 │   └── setup.sh               # ツールのインストール
+├── templates/paperback.html   # ペーパーバック用 HTML のテンプレート（扉・目次・本文・奥付）
 ├── lint/                      # 原稿のチェックの設定
 │   ├── dict/technical.yml     #   技術書向けの表記ルール（辞書）
 │   ├── dict/project.yml       #   プロジェクト独自の表記ルール（辞書）
@@ -79,7 +85,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   ├── workflows/lint.yml     # CI（原稿のチェック）
 │   └── actions/setup-tools/   # CI 用のツールのセットアップ
 ├── .textlintrc.json           # textlint のルール設定
-├── package.json               # チェック用ツール（Node.js）
+├── package.json               # チェック用ツール・Vivliostyle（Node.js）
 ├── Makefile
 └── requirements.txt
 ```
@@ -95,6 +101,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 | [Pillow](https://python-pillow.org/)（推奨） | 画像の最適化・表紙の確認 | Python 製で追加のネイティブツール（ImageMagick など）が要らない。無い場合は最適化をスキップして元画像を使う |
 | [EPUBCheck](https://www.w3.org/publishing/epubcheck/)（任意・Java 11 以上） | EPUB の規格チェック | W3C 公式の検証ツール。KDP でのエラーを事前に減らせる |
 | [Kindle Previewer 3](https://kdp.amazon.co.jp/ja_JP/help/topic/G202131170)（任意） | Kindle での見え方の確認 | Amazon 公式。KDP と同じ変換エンジンで表示できる |
+| [Vivliostyle CLI](https://vivliostyle.org/)（任意・Node.js 20 以上） | ペーパーバックの本文 PDF の組版 | CSS 組版（CSS Paged Media）で縦書き・右綴じ・ノンブル・柱・目次のページ参照に対応し、日本語の組版の実績がある。Pandoc の HTML 出力をそのまま使えるので、EPUB と同じ原稿・フィルタ・CSS を共有できる（LaTeX のように別の組版系を保守しなくてよい） |
 | [Node.js](https://nodejs.org/) 20 以上 + [textlint](https://textlint.org/)（任意） | 原稿のチェック | 日本語の表記ゆれ・技術文書向けのルールが最も充実している校正ツール（[詳細](#チェックの内容とツール)） |
 
 ### macOS / Linux / WSL
@@ -377,6 +384,117 @@ cover_design:
 KDP ではタイトル・著者名が書誌情報と一致していることが求められるため、表紙の文字は `book.yaml` の値をそのまま使います（表記を変えるときは KDP の入力欄とも合わせてください）。EPUB には JPEG を埋め込みます（EPUB の表紙に TIFF は使えないため）。
 
 > このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の値は KDP ヘルプの検索結果と既知の内容に基づいています。アップロード前に [電子書籍の表紙の作成（KDP ヘルプ）](https://kdp.amazon.co.jp/ja_JP/help/topic/G6GTK3T3NUHKLEFX) で最新の値を確認してください。
+
+## ペーパーバック（紙の本）
+
+同じ原稿から、**KDP ペーパーバックの本文 PDF** も作れます。縦書き（右綴じ）・横書き（左綴じ）のどちらにも対応し、判型・余白・ノンブル・裁ち落としは KDP の本文の要件に合わせて自動で決まります。
+
+```text
+原稿（Markdown）──pandoc（EPUB と同じ Lua フィルタ）──▶ HTML ──Vivliostyle（CSS 組版）──▶ 本文 PDF
+```
+
+### 準備
+
+組版には [Vivliostyle CLI](https://vivliostyle.org/)（Node.js 製。縦書きの組版・ページ番号・目次のページ参照に対応）を使います。Node.js 20 以上を入れてから、リポジトリの直下で次を実行します（`bash scripts/setup.sh` でも入ります）。
+
+```bash
+npm install
+```
+
+- Vivliostyle は Chrome（Chromium）で組版します。初回の実行時に自動でダウンロードされます。インストール済みの Chrome を使う場合は `--browser /path/to/chrome`、または環境変数 `VIVLIOSTYLE_BROWSER` で指定します
+- 明朝体・ゴシック体の日本語フォントが必要です。Linux では `sudo apt install fonts-noto-cjk`。macOS・Windows は OS 標準のフォント（ヒラギノ・游明朝など）が使われます
+
+### 使い方
+
+```bash
+make paperback                                   # books/ 以下の全ての本 → dist/<名前>-paperback.pdf
+make paperback-book BOOK=books/my-book           # 1 冊だけ
+make paperback-modes                             # 縦書き版・横書き版の両方 → dist/modes/<名前>-{vertical,horizontal}-paperback.pdf
+```
+
+```bash
+python3 scripts/build.py books/my-book --paperback
+```
+
+```bash
+python3 scripts/build.py books/my-book --paperback --writing-mode vertical
+```
+
+縦書き・横書きは EPUB と同じく `layout.writing_mode` で決まり、`--writing-mode` で一時的に上書きできます。組版に使った HTML を見たいときは `--keep-html` を付けると `dist/.paperback/` に残ります。
+
+ビルドすると、PDF の確認結果と、表紙を作るときの寸法が表示されます。
+
+```text
+[paperback] Vivliostyle で組版します（判型 A5（148.0mm×210.0mm）、ノド 18.0mm）
+[paperback] PDF を確認しました: 17 ページ、ページサイズ 5.827×8.268 インチ（148.0mm×210.0mm）、ノド 18.0mm、埋め込みフォント: …
+[paperback] 表紙 PDF の寸法（クリーム・モノクロ、18 ページ）: 幅 11.949 × 高さ 8.518 インチ（303.5mm×216.4mm）、背幅 0.045 インチ（1.1mm）
+```
+
+### 設定（book.yaml の paperback）
+
+```yaml
+paperback:
+  trim: a5            # 判型（下の表）。{width: 128mm, height: 182mm} のように直接書くこともできる
+  bleed: false        # 裁ち落とし。画像や色を紙の端まで印刷するときだけ true
+  paper: cream        # white / cream / color（表紙の背幅の計算に使う）
+  font: serif         # 本文の書体: serif（明朝）/ sans（ゴシック）/ フォント名
+  font_size: 9pt      # 本文の文字の大きさ（既定: 縦書き 9pt、横書き 9.5pt）
+  line_height: 1.75   # 行送り（既定: 縦書き 1.75、横書き 1.7）
+  margins:            # 余白（mm / in / pt。数字だけなら mm）
+    top: 20mm         #   天
+    bottom: 20mm      #   地
+    outside: 16mm     #   小口（外側）
+    inside: 18mm      #   ノド（内側）。ページ数に応じた KDP の最小値より狭くはならない
+  page_numbers: true  # ノンブル
+  running_heads: true # 柱（章タイトル）
+  colophon: true      # 巻末の奥付
+  isbn: ""            # ペーパーバックの ISBN（奥付に入る）
+  colophon_notes: []  # 奥付に足す行
+  author_suffix: "　著" # 扉の著者名の後ろに付ける文字
+  css: []             # 紙の本だけに使う追加の CSS
+  output: my-book-paperback.pdf
+```
+
+`paperback` を書かなくても、上の既定値（A5・裁ち落としなし）で PDF を作れます。
+
+| `trim` | 寸法 | 備考 |
+|:--|:--|:--|
+| `5x8` / `5.06x7.81` / `5.25x8` / `5.5x8.5` / `6x9` / `6.14x9.21` / `6.69x9.61` / `7x10` / `7.44x9.69` / `7.5x9.25` / `8x10` / `8.25x6` / `8.25x8.25` / `8.5x8.5` / `8.5x11` / `a4` | インチ（幅×高さ）。`a4` は 8.27×11.69 | KDP の標準の判型 |
+| `a5` | 148×210mm | KDP では「カスタムの判型」に幅・高さ（インチ）を入力する（ビルド時に値を表示） |
+| `b6` | 128×182mm | 同上 |
+| `{width: …, height: …}` | 任意 | 幅 4〜8.5 インチ・高さ 6〜11.69 インチ（KDP のカスタム判型の範囲）。新書判・文庫判は幅が 4 インチ未満なので作れない |
+
+### KDP の要件に合わせていること
+
+| 項目 | 内容 |
+|:--|:--|
+| ページサイズ | 裁ち落としなし: 判型と同じ。裁ち落としあり: **幅 + 0.125 インチ、高さ + 0.25 インチ**（天・地・小口に 3.2mm ずつ。ノド側には付けない） |
+| ノド（内側の余白） | ページ数で決まる最小値以上: 24〜150 ページ 0.375 インチ（9.5mm）、151〜300 ページ 0.5 インチ（12.7mm）、301〜500 ページ 0.625 インチ（15.9mm）、501〜700 ページ 0.75 インチ（19.1mm）、701〜828 ページ 0.875 インチ（22.2mm）。ページ数は組んでみないと分からないので、**組版 → ページ数を数える → 足りなければノドを広げて組み直す** を自動で行う |
+| 外側の余白（天・地・小口） | 0.25 インチ（6.4mm）以上、裁ち落としありは 0.375 インチ（9.5mm）以上。下回る設定はエラー |
+| 左右のページ | 右側のページはノドが左、左側のページはノドが右。**縦書き（右綴じ）では 1 ページ目が左側のページ**になり、余白・ノンブルの位置も入れ替わる |
+| ノンブル | 地の小口側にアラビア数字（縦書きの本も横組み）。扉・白ページ・奥付には入れない |
+| 柱 | 天の小口側に章タイトル。章の最初のページと目次には入れない |
+| 章の始まり | 奇数ページ（横書きは右側、縦書きは左側のページ）から始め、必要なら白ページを入れる |
+| トンボ | 付けない（KDP はトンボ付きの PDF を受け付けない） |
+| フォント | すべて PDF に埋め込む（埋め込まれていなければエラー） |
+| 画像 | Kindle 向けに縮小した版ではなく**元画像**を使う。版面の幅いっぱいに置いたとき 300dpi 未満になる画像は警告 |
+| ページ数 | 24 ページ未満・828 ページ超は警告。奇数ページなら「KDP が最後に白ページを足す」と警告 |
+
+ほかに、ページの構成は **扉 → 目次（ページ番号付き） → 本文 → 奥付** です。脚注は章末にまとめて出ます。
+
+### 表紙
+
+KDP のペーパーバックでは、本文の PDF とは別に、**表 1（表紙）・背・表 4（裏表紙）を 1 枚にした表紙 PDF** をアップロードします（または KDP の表紙作成ツールを使う）。電子書籍用の表紙画像（`cover` / `cover_design`）は本文 PDF には入りません。ビルド時に表示される寸法（背幅は KDP の用紙の厚さ: 白 0.002252 インチ／ページ、クリーム 0.0025、カラー 0.002347 から計算）で作ってください。80 ページ未満の本は背表紙に文字を入れられません。
+
+### KDP へのアップロード
+
+1. KDP の本棚で「ペーパーバック」を作成（電子書籍と同じタイトルにすると商品ページがまとまる）
+2. 「印刷オプション」で、インクと用紙（`paper` と同じもの）、判型（`trim`。`a5`・`b6` は「カスタムの判型」）、裁ち落とし（`bleed`）を選ぶ
+3. 縦書きの本は「読む方向」を **右から左** にする
+4. 「原稿」に `dist/<名前>-paperback.pdf`、「表紙」に表紙 PDF をアップロード
+5. **印刷プレビューアーで余白・ノド・裁ち落としの警告がないことを確認**してから、校正刷り（著者用コピー）を注文して実物を確認する
+
+> この機能を作成した環境からは kdp.amazon.com に接続できなかったため、上の数値は KDP ヘルプ「ペーパーバックの本文の書式設定」「判型、裁ち落とし、余白」の既知の内容をもとにしています。出版前に KDP の印刷プレビューアーで確認してください。
 
 ## 原稿の書き方
 
@@ -800,6 +918,7 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
 | `Build (book.yaml)` | `books/` 以下の全ての本を `book.yaml` の設定どおりにビルドし、EPUBCheck で検証 | `epub`（KDP にアップロードする EPUB）、`epubcheck-reports`（JSON レポート） |
 | `Validate (vertical)` | 全ての本を **縦書き** でビルドし、EPUBCheck で検証 | `epub-vertical` |
 | `Validate (horizontal)` | 全ての本を **横書き** でビルドし、EPUBCheck で検証 | `epub-horizontal` |
+| `Paperback PDF (vertical)` / `(horizontal)` | 全ての本のペーパーバック用の本文 PDF を縦書き・横書きで作り、ページサイズ・フォントの埋め込みを確認 | `paperback-vertical` / `paperback-horizontal` |
 
 - ツールのバージョンは `build.yml` の `env` で固定（Pandoc 3.9・EPUBCheck 5.3.0）。セットアップは `.github/actions/setup-tools` にまとめている
 - **エラーまたは警告が 1 件でもあるとジョブが失敗**します。各ジョブの「Summary」に EPUB ごとの件数の表が出ます
@@ -893,6 +1012,10 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
 | `Java が見つかりません` | Java 11 以上をインストール（[EPUBCheck による検証](#epubcheck-による検証)） |
 | `EPUBCheck で warning 以上のメッセージが見つかりました` | 表示された場所（EPUB 内のファイル・行）を確認する。`dist/*.epub` は ZIP なので展開して該当の XHTML を見られる。原稿（Markdown）・`book.yaml`・`css` で追加した CSS のどれが原因かを特定して直す |
 | 原稿に書いた生の HTML でエラーになる | EPUB の XHTML は XML なので、`<br>` ではなく `<br />` のように閉じる。HTML5 で廃止された要素（`<center>`・`<font>` など）は使わない |
+| `Vivliostyle CLI が見つかりません` | リポジトリのルートで `npm install` を実行 |
+| ペーパーバックの PDF が豆腐（□）になる・書体が違う | 日本語フォントを入れる（Linux は `sudo apt install fonts-noto-cjk`）。`paperback.font` にインストール済みのフォント名を書くこともできる |
+| `paperback.margins.… が KDP の最小値 … より小さいです` | 天・地・小口の余白を 6.4mm（裁ち落としありは 9.5mm）以上にする |
+| ペーパーバックで画像の dpi の警告が出る | 元画像を大きい解像度のものに差し替える（表示された幅の px 以上が目安）。小さく置く画像なら無視してよい |
 | `textlint が見つかりません` | リポジトリのルートで `npm install` を実行 |
 | `npm run lint` で外部リンクが「接続できませんでした」 | 社内ネットワークなどで外に出られない。`npm run lint -- --no-external` で省略するか、`HTTPS_PROXY` を設定する（自動でプロキシを使う） |
 | `Error while loading rule 'prh': … spec failed` | 辞書の `specs` の結果が `to` と違う。`lint/dict/*.yml` のそのルールの `pattern` を見直す |

@@ -1,0 +1,141 @@
+@charset "UTF-8";
+/*
+ * print.css — KDP ペーパーバック（紙の本）用の追加スタイル
+ *
+ * base.css と vertical.css / horizontal.css の後に読み込まれ、印刷向けに上書きする。
+ * 判型・余白・ノンブルの位置など「寸法」に関わる @page は、book.yaml の paperback から
+ * scripts/paperback.py が page.css として生成する（ここには書かない）。
+ *
+ * 文字の大きさ・行間・書体は page.css が :root の変数で渡す:
+ *   --pb-font-size / --pb-line-height / --pb-font-body / --pb-font-heading / --pb-font-mono
+ */
+
+:root {
+  font-size: var(--pb-font-size, 9pt);
+  line-height: var(--pb-line-height, 1.7);
+  font-family: var(--pb-font-body, serif);
+  /* 印刷では読者が設定を変えられないので、電子書籍版で避けていた固定値を使う */
+  color: black;
+  widows: 2;
+  orphans: 2;
+}
+body { margin: 0; text-align: justify; }
+
+h1, h2, h3, h4, h5, h6,
+.admonition-title, .listing-caption, figcaption, caption,
+.titlepage .subtitle, .toc-title, .colophon-title {
+  font-family: var(--pb-font-heading, sans-serif);
+}
+code, pre, kbd, samp { font-family: var(--pb-font-mono, monospace); }
+
+a { color: inherit; text-decoration: none; }
+
+/* 画像は版面（本文の領域）に収める。キャプションの分だけ少し小さくする */
+figure img, p > img,
+.vertical figure img, .vertical p > img {
+  max-width: var(--pb-text-width);
+  max-height: calc(var(--pb-text-height) * 0.8);
+}
+.vertical figure img, .vertical p > img {
+  max-width: calc(var(--pb-text-width) * 0.8);
+  max-height: var(--pb-text-height);
+}
+
+/* ---------- 扉 ---------- */
+/*
+ * 版面いっぱいの箱にして、書名を前（横書きは上、縦書きは右）、発行者を後ろ（下・左）に置く。
+ * 縦書きでは block-size が横幅、inline-size が高さになる
+ */
+.titlepage {
+  page: titlepage;
+  break-after: page;
+  text-indent: 0;
+  display: flex;
+  flex-direction: column;
+  block-size: calc(var(--pb-text-height) - 1px);
+}
+.vertical .titlepage { block-size: calc(var(--pb-text-width) - 1px); }
+.titlepage p { text-indent: 0; }
+.titlepage h1.main { font-size: 2.2em; margin: 0; margin-block: 25% 0.6em; }
+.titlepage .subtitle { font-size: 1.3em; margin: 0; margin-block-end: 2.5em; }
+.titlepage .aut { font-size: 1.2em; margin: 0; }
+.titlepage .publisher { margin: 0; margin-block-start: auto; }
+.horizontal .titlepage { text-align: center; }
+.horizontal .titlepage h1.main { margin-block-start: 30%; }
+.vertical .titlepage h1.main { margin-block-start: 15%; }
+.vertical .titlepage .subtitle { padding-inline-start: 3em; }
+.vertical .titlepage .aut { padding-inline-start: 14em; }
+.vertical .titlepage .publisher { padding-inline-start: 14em; }
+
+/* ---------- 目次（ページ番号付き） ---------- */
+nav#toc {
+  page: frontmatter;
+  break-before: recto;
+}
+nav#toc h1.toc-title { font-size: 1.5em; margin: 0 0 1.5em 0; }
+.vertical nav#toc h1.toc-title { margin: 0 0 0 1.5em; }
+nav#toc ul, nav#toc ol { list-style: none; margin: 0; padding: 0; }
+nav#toc ul ul { padding-inline-start: 1.5em; font-size: 0.95em; }
+nav#toc li { margin: 0; }
+nav#toc > ul > li { margin-block-start: 0.6em; font-weight: bold; }
+nav#toc > ul > li li { font-weight: normal; }
+nav#toc a { display: flex; }
+nav#toc a::after {
+  content: target-counter(attr(href url), page);
+  margin-inline-start: auto;
+  padding-inline-start: 1em;
+}
+.vertical nav#toc a::after { text-combine-upright: all; }
+
+/* ---------- 本文 ---------- */
+main.bodymatter { counter-reset: none; }
+/* 章は奇数ページ（右綴じなら左ページ、左綴じなら右ページ）から始める */
+main.bodymatter, main.bodymatter > section.level1 {
+  break-before: recto;
+}
+main.bodymatter h1 {
+  string-set: chapter content(text);
+  margin-bottom: 2.5em;
+}
+.vertical main.bodymatter h1 { margin: 0 0 0 2.5em; }
+main.bodymatter section.level1 > h1 { break-before: auto; }
+
+/* 印刷ではコードの行を折り返し、ページをまたいでも読めるようにする */
+pre { break-inside: auto; }
+pre, code { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+table, figure, .admonition { break-inside: avoid; }
+
+/* 脚注は章末にまとまって出る（pandoc の --reference-location=section） */
+section.footnotes { break-inside: auto; }
+
+/* ---------- 奥付 ---------- */
+.colophon {
+  page: colophon;
+  break-before: page;
+  font-size: 0.9em;
+  text-indent: 0;
+  /* 奥付は版面の最後（横書きは下、縦書きは左）に寄せる */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  block-size: calc(var(--pb-text-height) - 1px);
+}
+.vertical .colophon { block-size: calc(var(--pb-text-width) - 1px); }
+.colophon p { text-indent: 0; margin: 0; }
+.colophon-title {
+  font-weight: bold;
+  font-size: 1.15em;
+  padding-block-end: 0.6em;
+  margin-block-end: 0.6em;
+  border-block-end: 0.5pt solid black;
+}
+.colophon dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 1.5em;
+  row-gap: 0.2em;
+  margin: 0 0 0.8em 0;
+}
+.colophon dt { font-family: var(--pb-font-heading, sans-serif); }
+.colophon dd { margin: 0; }
+.colophon-rights { margin-block-start: 0.8em; border-block-start: 0.5pt solid black; padding-block-start: 0.6em; }

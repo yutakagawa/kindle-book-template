@@ -1,7 +1,7 @@
 {
   "name": "kindle-book-template",
   "private": true,
-  "description": "原稿の品質チェック（表記ゆれ・文章・リンク切れ）用のツール。EPUB のビルド自体は Python + Pandoc で行う",
+  "description": "原稿の品質チェック（表記ゆれ・文章・リンク切れ）と、ペーパーバック用 PDF の組版（Vivliostyle）に使うツール。EPUB のビルド自体は Python + Pandoc で行う",
   "scripts": {
     "lint": "node scripts/check-manuscript.mjs",
     "lint:fix": "node scripts/check-manuscript.mjs --fix",
@@ -16,6 +16,7 @@
     "@textlint/config-loader": "^15.8.0",
     "@textlint/kernel": "^15.8.0",
     "@textlint/textlint-plugin-markdown": "^15.8.0",
+    "@vivliostyle/cli": "^11.4.0",
     "sudachi-synonyms-dictionary": "^20.0.0",
     "textlint": "^15.8.0",
     "textlint-filter-rule-allowlist": "^4.0.0",

@@ -5,7 +5,7 @@ VALIDATE := $(PYTHON) scripts/validate.py
 # EPUBCheck で失敗にする重大度: fatal / error / warning（既定）/ info / usage
 FAIL_ON  ?= warning
 
-.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book clean setup
+.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book clean setup
 
 all: build
 
@@ -44,6 +44,19 @@ horizontal:
 ## 特定の本: make book BOOK=books/my-book
 book:
 	$(BUILD) $(BOOK)
+
+## KDP ペーパーバック用の本文 PDF（books/ 以下の全ての本）→ dist/*-paperback.pdf。先に npm install が必要
+paperback:
+	$(BUILD) --all --paperback
+
+## 全ての本を縦書き・横書きの両方で PDF にする → dist/modes/*-{vertical,horizontal}-paperback.pdf
+paperback-modes:
+	$(BUILD) --all --paperback --writing-mode vertical   -o dist/modes
+	$(BUILD) --all --paperback --writing-mode horizontal -o dist/modes
+
+## 特定の本の PDF: make paperback-book BOOK=books/my-book
+paperback-book:
+	$(BUILD) --paperback $(BOOK)
 
 setup:
 	bash scripts/setup.sh

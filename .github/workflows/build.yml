@@ -1,4 +1,4 @@
-name: Build EPUB
+name: Build EPUB / Paperback PDF
 
 on:
   push:
@@ -71,3 +71,49 @@ jobs:
           name: epub-${{ matrix.mode }}
           path: dist/modes/
           if-no-files-found: ignore
+
+  # 同じ原稿から KDP ペーパーバック用の本文 PDF を「縦書き」「横書き」の両方で作る。
+  # 判型・余白・ページサイズ・フォントの埋め込みは scripts/paperback.py が確認し、満たさなければ失敗する
+  paperback:
+    name: Paperback PDF (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [vertical, horizontal]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-tools
+        with:
+          pandoc-version: ${{ env.PANDOC_VERSION }}
+          epubcheck-version: ${{ env.EPUBCHECK_VERSION }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install npm packages (Vivliostyle)
+        run: npm ci
+
+      # 明朝体・ゴシック体の日本語フォント（PDF に埋め込まれる）
+      - name: Install Japanese fonts
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q fonts-noto-cjk fonts-noto-cjk-extra
+
+      # ランナーに入っている Chrome を使う（無ければ Vivliostyle が自動でダウンロードする）
+      - name: Use the preinstalled Chrome
+        run: |
+          chrome="$(command -v google-chrome || command -v chromium || true)"
+          if [ -n "$chrome" ]; then echo "VIVLIOSTYLE_BROWSER=$chrome" >> "$GITHUB_ENV"; fi
+
+      - name: Build paperback PDFs (${{ matrix.mode }})
+        run: python3 scripts/build.py --all --paperback --writing-mode ${{ matrix.mode }} -o dist/paperback
+
+      - name: Upload PDFs
+        uses: actions/upload-artifact@v6
+        with:
+          name: paperback-${{ matrix.mode }}
+          path: dist/paperback/*.pdf
+          if-no-files-found: error

@@ -65,6 +65,28 @@ layout:
     tables: sideways
     tcy_digits: 2              # 何桁までの数字を縦中横にするか
 
+# ---- ペーパーバック（紙の本。python3 scripts/build.py --paperback で本文 PDF を作る） ----
+# 寸法は KDP の本文の要件に合わせて自動で決まります（README の「ペーパーバック（紙の本）」を参照）。
+paperback:
+  trim: a5                     # 判型: 5x8 / 5.5x8.5 / 6x9 などの KDP 標準サイズ、a5 / b6、または {width: 128mm, height: 182mm}
+  bleed: false                 # 裁ち落とし（画像や色を紙の端まで印刷するときだけ true）
+  paper: cream                 # white（白）/ cream（クリーム）/ color（カラー）… 表紙の背幅の計算に使う
+  font: serif                  # 本文の書体: serif（明朝）/ sans（ゴシック）/ フォント名
+  font_size: 9pt               # 本文の文字の大きさ
+  line_height: 1.75            # 行送り（文字の大きさに対する倍率）
+  # margins:                   # 余白（省略時の値）。ノドはページ数に応じた KDP の最小値より狭くならない
+  #   top: 20mm
+  #   bottom: 20mm
+  #   outside: 16mm            # 小口（外側）
+  #   inside: 18mm             # ノド（内側）
+  # page_numbers: true         # ノンブル（地の小口側）
+  # running_heads: true        # 柱（天の小口側に章タイトル）
+  # colophon: true             # 巻末に奥付を入れる
+  # isbn: ""                   # ペーパーバックの ISBN（KDP の無料 ISBN を使うなら割り当て後に書く）
+  # colophon_notes:            # 奥付に足す行
+  #   - 本書の内容に関するお問い合わせは……
+  # output: my-book-paperback.pdf
+
 # ---- 追加の CSS（省略可） ----
 # css:
 #   - custom.css
