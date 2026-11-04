@@ -1,0 +1,94 @@
+# =====================================================================
+# 本の設定ファイル（完成見本: 『Markdownで作るKindle本 入門』）
+# このテンプレートの機能を一通り使った横書きの技術書です。
+# 新しい本を作るときは、このディレクトリをコピーして値を書き換えてください
+# （uuid は必ず新しい値にします）。
+# =====================================================================
+
+# ---- 書誌情報（EPUB のメタデータになります） ----
+title: Markdownで作るKindle本 入門
+title_kana: マークダウンデツクルキンドルボン ニュウモン
+subtitle: テンプレートで原稿からKDP出版まで
+author:
+  - name: 山田 太郎
+    kana: ヤマダ タロウ
+contributors:
+  - name: 鈴木 花子
+    role: edt                  # 編集
+publisher: サンプル出版
+language: ja
+date: 2026-11-04
+description: >-
+  Markdownで書いた原稿から、Kindle（KDP）用のEPUB3とペーパーバックの本文PDFを作る
+  テンプレートの使い方を、セットアップから出版まで5章で解説する入門書です。
+  本書そのものがテンプレートの完成見本になっています。
+keywords: [Kindle, KDP, EPUB, Markdown, Pandoc, 電子書籍, 自費出版]
+rights: © 2026 山田 太郎
+
+# ---- 識別子 ----
+isbn: ""
+uuid: ea91fda0-3c31-46ed-b1a7-13cbcb5c0e2b
+
+# ---- 表紙（自動生成） ----
+# ビルドのたびに title / subtitle / author から dist/guide-book-cover.jpg を作り、EPUB に埋め込みます。
+cover_design:
+  style: auto                  # 横書きの本なので横組みのデザインになる（--writing-mode vertical なら縦組み）
+  colors: ["#0f2a44", "#1f5f8b", "#2a7f8f"]
+  gradient: diagonal
+  accent_color: "#f2c14e"
+  font: sans
+  title: "Markdownで作る\nKindle本 入門"
+  author_suffix: " 著"
+
+# ---- 原稿（この順番で 1 冊になります） ----
+chapters:
+  - chapters/00-preface.md
+  - chapters/01-overview.md
+  - chapters/02-new-book.md
+  - chapters/03-writing.md
+  - chapters/04-build-check.md
+  - chapters/05-publish.md
+  - chapters/90-cheatsheet.md
+  - chapters/99-afterword.md
+
+# ---- 組版 ----
+layout:
+  writing_mode: horizontal     # horizontal = 横書き・左綴じ / vertical = 縦書き・右綴じ
+  toc_title: 目次
+  toc_depth: 2
+  number_chapters: true
+  chapter_label: "第{n}章"
+  appendix_label: "付録{n}"
+  figure_label: "図{c}.{n}"
+  table_label: "表{c}.{n}"
+  listing_label: "リスト{c}.{n}"
+  highlight_style: styles/kindle.theme
+  vertical:                    # --writing-mode vertical でビルドしたときに使う
+    code_blocks: sideways
+    tables: sideways
+    tcy_digits: 2
+
+# ---- 画像の最適化（既定値のままでよいものは省略できる） ----
+images:
+  optimize: true
+  max_width: 1600
+  min_width: 600
+
+# ---- ペーパーバック（python3 scripts/build.py books/guide-book --paperback） ----
+paperback:
+  trim: a5
+  bleed: false
+  paper: white
+  font: serif
+  font_size: 9.5pt
+  line_height: 1.7
+  page_numbers: true
+  running_heads: true
+  colophon: true
+  isbn: ""
+  colophon_notes:
+    - 本書はKindle本テンプレートの完成見本として作成しました。
+    - 本書の原稿は books/guide-book/ にあります。
+
+# 出力ファイル名（省略すると dist/guide-book.epub）
+# output: guide-book.epub
