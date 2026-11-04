@@ -54,7 +54,7 @@
 | Git | 推奨 | テンプレートの取得、原稿の履歴管理 |
 | Pandoc 3.1 以上、Python 3.9 以上 | ○ | EPUB の生成（手順 3 で入れる） |
 | Java 11 以上 + EPUBCheck | 推奨 | EPUB の検証（手順 3 で入れる） |
-| Node.js 20 以上 | 推奨 | 原稿のチェック（手順 3 で入れる） |
+| Node.js 22.12 以上（推奨 24 LTS） | 推奨 | 原稿のチェック・ペーパーバックの PDF（手順 3 で入れる） |
 | Kindle Previewer 3 | 推奨 | Kindle での見え方の確認（手順 10 で入れる） |
 
 ### KDP のアカウント
@@ -102,7 +102,7 @@ GitHub を使うと、push するたびに [GitHub Actions](../README.md#github-
 bash scripts/setup.sh
 ```
 
-Pandoc、Python のパッケージ（PyYAML・Pillow）、EPUBCheck がまとめて入ります。Java が無い場合はインストール方法が表示されるので、その案内に従って Java 11 以上を入れてから、もう一度 `bash scripts/setup.sh` を実行してください。詳しくは README の [セットアップ](../README.md#セットアップ) を参照してください。
+Pandoc、Python のパッケージ（PyYAML・Pillow）、EPUBCheck がまとめて入ります。Python のパッケージは、リポジトリの直下にできる `.venv`（このテンプレート専用の Python の環境）に入ります。`make` や `python3 scripts/build.py` は `.venv` があれば自動でそれを使うので、特別な操作は要りません。途中で失敗した手順があると、最後にまとめて表示されます。Java が無い場合はインストール方法が表示されるので、その案内に従って Java 11 以上を入れてから、もう一度 `bash scripts/setup.sh` を実行してください。詳しくは README の [セットアップ](../README.md#セットアップ) を参照してください。
 
 Linux / WSL で表紙を自動生成する場合は、日本語フォントも入れておきます（macOS は不要）。
 
@@ -112,7 +112,7 @@ sudo apt install fonts-noto-cjk
 
 ### 3-2. 原稿チェック用のツールを入れる
 
-[Node.js](https://nodejs.org/) 20 以上を入れてから、次を実行します。
+[Node.js](https://nodejs.org/) 22.12 以上（推奨は 24 LTS。[nvm](https://github.com/nvm-sh/nvm) を使うなら `nvm install` でリポジトリの `.nvmrc` のバージョンが入ります）を入れてから、次を実行します。
 
 ```bash
 npm install

@@ -15,6 +15,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { compareVersions, requiredNodeVersion, supportsEnvProxy } from "./node-env.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BOOKS_DIR = path.join(ROOT, "books");
@@ -289,7 +290,11 @@ function collectFromAst(ast, text) {
         break;
       case "Image":
         if (attrId(content[0])) ids.push({ id: attrId(content[0]), explicit: true });
-        images.push(content[2][0]);
+        // 代替テキスト: ![説明](x.png) の「説明」か、{alt="..."} 属性
+        images.push({
+          src: content[2][0],
+          hasAlt: content[1].length > 0 || (content[0][2] ?? []).some(([k, v]) => k === "alt" && v.trim() !== "")
+        });
         break;
       case "Cite":
         for (const citation of content[0]) cites.push(citation.citationId);
@@ -379,7 +384,10 @@ function checkLinksLocal(book, linkCfg, pandoc) {
     }
 
     // 画像
-    for (const src of data.images) {
+    for (const { src, hasAlt } of data.images) {
+      if (!hasAlt) {
+        push(file, text, src, "warning", `画像に代替テキストがありません: ${src}（![図の説明](${src}) のように説明を書くと、読み上げで内容が伝わります。アクセシビリティの要件（欧州アクセシビリティ法）にも関わります）`);
+      }
       if (/^https?:\/\//i.test(src)) {
         push(file, text, src, "warning", `外部の画像は使わず images/ に置いてください: ${src}`);
         externals.push({ url: src, file, text });
@@ -580,8 +588,21 @@ async function main() {
   return total.errors ? 1 : 0;
 }
 
-// プロキシ環境（HTTPS_PROXY）では、Node.js の fetch にプロキシを使わせるため設定して起動し直す
-if ((process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy) && !process.env.NODE_USE_ENV_PROXY) {
+// Node.js が古いと、textlint や Vivliostyle が動かない（package.json の engines を参照）
+const requiredNode = requiredNodeVersion();
+if (requiredNode && compareVersions(process.version, requiredNode) < 0) {
+  process.stderr.write(c.red(`エラー: Node.js ${requiredNode} 以上が必要です（現在 ${process.version}）。推奨は 24 LTS です（nvm なら nvm install && nvm use）`) + "\n");
+  process.exit(2);
+}
+
+// プロキシ環境（HTTPS_PROXY）では、Node.js の fetch にプロキシを使わせるため設定して起動し直す。
+// NODE_USE_ENV_PROXY は Node.js 24 以降・22.21 以降でだけ使える
+const proxySet = Boolean(process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy);
+if (proxySet && !supportsEnvProxy()) {
+  process.stderr.write(
+    c.yellow(`⚠ Node.js ${process.version} は HTTPS_PROXY を使えないため、外部 URL の確認がプロキシを通りません。Node.js 24 以降（または 22.21 以降）にするか、--no-external を付けてください`) + "\n"
+  );
+} else if (proxySet && !process.env.NODE_USE_ENV_PROXY) {
   const r = spawnSync(process.execPath, [...process.execArgv, "--no-warnings", fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
     stdio: "inherit",
     env: { ...process.env, NODE_USE_ENV_PROXY: "1", ...(process.stdout.isTTY ? { FORCE_COLOR: "1" } : {}) }
