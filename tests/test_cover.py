@@ -360,6 +360,21 @@ class TestRenderCover:
         assert lay.size * (1 + (lay.count - 1) * el.pitch) <= 900
         assert cover.fit(cover.Element("  ", fonts, False, 100, 50, 2, 1.3), 1000, 500, "副題", []) is None
 
+    @pytest.mark.parametrize("style", ["horizontal", "vertical"])
+    def test_title_with_explicit_newline(self, tmp_path, style):
+        """cover_design.title の改行で改行位置を指定できる（Pillow 13 + libraqm では "\\n" を測るとエラーになっていた）。"""
+        cfg = {**CFG, "cover_design": {"title": "Markdownで作る\nKindle技術書"}}
+        im = cover.render_cover(cfg, tmp_path, style, [])
+        assert im.size == (1600, 2560)
+
+    def test_newline_atom_has_no_length(self, tmp_path):
+        fonts = cover.Fonts(cover.resolve_font("sans", 700, tmp_path, []))
+        nl = cover.make_atoms("上\n下")[1]
+        assert nl.kind == "nl"
+        for vertical in (False, True):
+            el = cover.Element("", fonts, vertical, 100, 50, 2, 1.3)
+            assert cover.atom_length(nl, fonts.get(100), 100, el) == 0.0
+
     def test_fit_avoids_breaking_inside_latin_words(self, tmp_path):
         fonts = cover.Fonts(cover.resolve_font("sans", 700, tmp_path, []))
         el = cover.Element("はじめてのPythonプログラミング", fonts, False, 190, 96, 3, 1.28)
