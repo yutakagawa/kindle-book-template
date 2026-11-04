@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -26,11 +27,18 @@ import tempfile
 import uuid
 import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
+
+if __name__ == "__main__":
+    # bash scripts/setup.sh が作った .venv があれば、その Python（PyYAML・Pillow 入り）で起動し直す
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from use_venv import reexec_in_venv
+    reexec_in_venv(__file__)
 
 try:
     import yaml
 except ImportError:  # pragma: no cover
-    sys.exit("PyYAML が必要です: pip install -r requirements.txt")
+    sys.exit("PyYAML が必要です: bash scripts/setup.sh を実行してください（.venv に入ります）")
 
 ROOT = Path(__file__).resolve().parent.parent
 FILTERS = ROOT / "filters"
@@ -301,7 +309,11 @@ def build_book(book_dir: Path, args) -> Path:
         if result.returncode != 0:
             raise BuildError(f"pandoc が失敗しました（終了コード {result.returncode}）")
 
-    postprocess(output, writing_mode)
+    cover_page = layout.get("cover_page", False)
+    if not isinstance(cover_page, bool):
+        raise BuildError(f"layout.cover_page は true か false です: {cover_page}")
+    postprocess(output, writing_mode, cover_page=cover_page,
+                accessibility=cfg.get("accessibility") or {}, warnings=warnings)
     for w in warnings:
         log("警告: " + w)
     log(f"出力: {output.relative_to(Path.cwd()) if output.is_relative_to(Path.cwd()) else output}")
@@ -363,16 +375,21 @@ def build_paperback(book_dir: Path, cfg: dict, chapters: list[Path], writing_mod
 
 def optimize_images(book_dir: Path, cfg: dict, meta: dict, out_dir: Path, args, warnings: list[str]) -> None:
     """原稿の画像を Kindle 向けに最適化し、pandoc がその版を使うよう meta を書き換える。"""
+    if str(ROOT / "scripts") not in sys.path:
+        sys.path.insert(0, str(ROOT / "scripts"))
+    import images
+
     images_cfg = cfg.get("images") or {}
     if args.no_optimize_images or (isinstance(images_cfg, dict) and images_cfg.get("optimize") is False):
         log("画像の最適化は無効です（元画像をそのまま使います）")
+        warn_gps_images(book_dir, out_dir, warnings)
         return
     try:
         import PIL  # noqa: F401
     except ImportError:
         warnings.append("Pillow が無いため画像を最適化していません（pip install -r requirements.txt）")
+        warn_gps_images(book_dir, out_dir, warnings)
         return
-    import images
 
     cover = Path(meta["cover-image"]) if meta.get("cover-image") else None
     try:
@@ -390,38 +407,169 @@ def optimize_images(book_dir: Path, cfg: dict, meta: dict, out_dir: Path, args, 
     warnings.extend(report.warnings)
 
 
-def postprocess(epub: Path, writing_mode: str) -> None:
+def warn_gps_images(book_dir: Path, out_dir: Path, warnings: list[str]) -> None:
+    """最適化しない（メタデータを消さない）ときに、位置情報付きの写真があれば警告する。"""
+    import images
+
+    for rel in images.find_gps_images(book_dir, skip=[out_dir]):
+        warnings.append(
+            f"{rel} に撮影場所（GPS 位置情報）が入っています。このまま EPUB に入り、読者に配布されます。"
+            "画像の最適化を有効にするか、画像編集ソフトで位置情報を削除してください"
+        )
+
+
+def postprocess(epub: Path, writing_mode: str, cover_page: bool = False,
+                accessibility: dict | None = None, warnings: list[str] | None = None) -> None:
     """pandoc の出力 EPUB を Kindle 向けに微調整する。
 
     - OPF に primary-writing-mode を追加（Kindle Publishing Guidelines の日本語縦書きの指定方法）
     - nav の landmarks に bodymatter（本文の開始位置）を追加。
       Kindle はこれを「最初から読む」位置として使う（Kindle Publishing Guidelines の推奨）
+    - HTML の表紙ページ（pandoc が作る cover.xhtml）を取り除く（cover_page が False のとき）。
+      Kindle Publishing Guidelines は、表紙画像に加えて HTML の表紙ページを本文に入れないよう求めている
+      （表紙が 2 回出る・変換に失敗することがある）。表紙画像（cover-image）はそのまま残す
+    - アクセシビリティのメタデータ（EPUB Accessibility 1.1 / schema.org）を OPF に追加
     - mimetype をアーカイブ先頭に無圧縮で格納（EPUB OCF の要件）
     """
     pwm = "vertical-rl" if writing_mode == "vertical" else "horizontal-lr"
+    if warnings is None:
+        warnings = []
+    with zipfile.ZipFile(epub) as zin:
+        infos = zin.infolist()
+        contents = {i.filename: zin.read(i.filename) for i in infos}
+
+    opf_name = next(n for n in contents if n.endswith(".opf"))
+    opf = contents[opf_name].decode("utf-8")
+    opf_dir = posixpath.dirname(opf_name)
+
+    removed: set[str] = set()
+    if not cover_page:
+        opf, cover_href = remove_cover_page(opf)
+        if cover_href:
+            removed.add(posixpath.normpath(posixpath.join(opf_dir, cover_href)))
+            for name in list(contents):
+                if name.endswith("nav.xhtml"):
+                    contents[name] = remove_cover_landmark(contents[name].decode("utf-8")).encode("utf-8")
+
+    # 本文の XHTML（表紙ページ・目次は除く。表紙画像は本文の画像として数えない）
+    xhtml = [contents[n].decode("utf-8") for n in contents
+             if n.endswith(".xhtml") and n not in removed and not n.endswith(("nav.xhtml", "/cover.xhtml"))]
+    opf = add_accessibility_metadata(opf, xhtml, accessibility or {}, warnings)
+    if "primary-writing-mode" not in opf:
+        opf = opf.replace(
+            "</metadata>",
+            f'  <meta name="primary-writing-mode" content="{pwm}" />\n  </metadata>',
+            1,
+        )
+    contents[opf_name] = opf.encode("utf-8")
+
     tmp = epub.with_suffix(".tmp")
-    with zipfile.ZipFile(epub) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        names = zin.namelist()
-        zout.writestr(zipfile.ZipInfo("mimetype"), zin.read("mimetype"), compress_type=zipfile.ZIP_STORED)
-        for name in names:
-            if name == "mimetype":
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        zout.writestr(zipfile.ZipInfo("mimetype"), contents["mimetype"], compress_type=zipfile.ZIP_STORED)
+        for info in infos:
+            name = info.filename
+            if name == "mimetype" or name in removed:
                 continue
-            data = zin.read(name)
+            data = contents[name]
             if name.endswith("nav.xhtml"):
                 data = add_bodymatter_landmark(data.decode("utf-8")).encode("utf-8")
-            if name.endswith(".opf"):
-                text = data.decode("utf-8")
-                if "primary-writing-mode" not in text:
-                    text = text.replace(
-                        "</metadata>",
-                        f'  <meta name="primary-writing-mode" content="{pwm}" />\n  </metadata>',
-                        1,
-                    )
-                data = text.encode("utf-8")
-            info = zipfile.ZipInfo(name, date_time=zin.getinfo(name).date_time)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            zout.writestr(info, data)
+            out = zipfile.ZipInfo(name, date_time=info.date_time)
+            out.compress_type = zipfile.ZIP_DEFLATED
+            zout.writestr(out, data)
     tmp.replace(epub)
+
+
+def remove_cover_page(opf: str) -> tuple[str, str | None]:
+    """OPF から HTML の表紙ページ（manifest・spine・guide）を取り除き、(新しい OPF, 表紙ページの href) を返す。
+
+    表紙ページは、spine の先頭にあって表紙画像（properties="cover-image"）だけを表示するページ
+    （pandoc では id="cover_xhtml"）。表紙画像の item と <meta name="cover"> は残す。
+    """
+    m = re.search(r'<item\b[^>]*\bid="cover_xhtml"[^>]*/>', opf)
+    if not m:
+        return opf, None
+    href = re.search(r'\bhref="([^"]+)"', m.group(0)).group(1)
+    opf = opf.replace(m.group(0), "", 1)
+    opf = re.sub(r'[ \t]*<itemref\b[^>]*\bidref="cover_xhtml"[^>]*/>[ \t]*\n?', "", opf)
+    opf = re.sub(r'[ \t]*<reference\b[^>]*\bhref="' + re.escape(href) + r'"[^>]*/>[ \t]*\n?', "", opf)
+    # 中身が無くなった guide は消す（guide には reference が 1 つ以上必要）
+    opf = re.sub(r'[ \t]*<guide>\s*</guide>[ \t]*\n?', "", opf)
+    opf = re.sub(r'\n[ \t]*\n', "\n", opf)
+    return opf, href
+
+
+def remove_cover_landmark(nav: str) -> str:
+    return re.sub(r'\s*<li>\s*<a [^>]*epub:type="cover"[^>]*>.*?</a>\s*</li>', "", nav, flags=re.S)
+
+
+# アクセシビリティのメタデータ（book.yaml の accessibility で上書きできる）
+A11Y_KEYS = {
+    "access_modes": "schema:accessMode",
+    "access_mode_sufficient": "schema:accessModeSufficient",
+    "features": "schema:accessibilityFeature",
+    "hazards": "schema:accessibilityHazard",
+    "summary": "schema:accessibilitySummary",
+    "conforms_to": "dcterms:conformsTo",
+    "certified_by": "a11y:certifiedBy",
+}
+
+
+def add_accessibility_metadata(opf: str, xhtml: list[str], cfg: dict, warnings: list[str]) -> str:
+    """EPUB Accessibility 1.1 のメタデータを OPF に加える。
+
+    既定値は EPUB の中身から決める（画像があるか・代替テキストがあるか・ルビがあるか）。
+    欧州アクセシビリティ法（EAA）の対象となる EU のストアでの販売で求められる情報。
+    適合（dcterms:conformsTo）は自動では宣言しない（確認した人が book.yaml で指定する）。
+    """
+    if not isinstance(cfg, dict):
+        raise BuildError("book.yaml の accessibility は key: value の形式で書いてください")
+    unknown = set(cfg) - set(A11Y_KEYS)
+    if unknown:
+        raise BuildError(f"accessibility に不明な設定があります: {', '.join(sorted(unknown))}")
+
+    body = "\n".join(xhtml)
+    imgs = re.findall(r"<img\b[^>]*>", body)
+    no_alt = [i for i in imgs if not re.search(r'\balt="[^"]*\S[^"]*"', i)]
+    has_visual = bool(imgs) or "<svg" in body
+    if no_alt:
+        warnings.append(
+            f"代替テキスト（alt）の無い画像が {len(no_alt)} 枚あります。"
+            "読み上げで内容が伝わるように、![説明](images/x.png) の形で説明を書いてください"
+        )
+
+    features = ["structuralNavigation", "tableOfContents", "readingOrder"]
+    if imgs and not no_alt:
+        features.append("alternativeText")
+    if "<ruby" in body:
+        features.append("rubyAnnotations")
+
+    values = {
+        "access_modes": ["textual"] + (["visual"] if has_visual else []),
+        "access_mode_sufficient": ["textual"] if not no_alt else ["textual,visual"],
+        "features": features,
+        "hazards": ["none"],
+        "summary": [
+            "目次と見出しによるナビゲーションを備えたリフロー型の電子書籍です。文字の大きさや書体は端末で変更できます。"
+            + ("画像には代替テキストを付けています。" if imgs and not no_alt else "")
+            + ("一部の画像には代替テキストがありません。" if no_alt else "")
+        ],
+        "conforms_to": [],
+        "certified_by": [],
+    }
+    for key, value in cfg.items():
+        values[key] = [str(v) for v in as_list(value)]
+
+    # pandoc 3.6 以降は独自の既定値（画像の有無にかかわらず alternativeText を宣言するなど）を書き込むので、
+    # それを取り除いてから、EPUB の中身から決めた値に置き換える（何度実行しても同じ結果になる）
+    props = "|".join(re.escape(p) for p in A11Y_KEYS.values())
+    opf = re.sub(r'[ \t]*<meta\b[^>]*\bproperty="(?:' + props + r')"[^>]*(?:/>|>.*?</meta>)[ \t]*\n?',
+                 "", opf, flags=re.S)
+
+    lines = []
+    for key, prop in A11Y_KEYS.items():
+        for v in values[key]:
+            lines.append(f'    <meta property="{prop}">{xml_escape(v.strip())}</meta>\n')
+    return re.sub(r"([ \t]*)</metadata>", lambda m: "".join(lines) + m.group(1) + "</metadata>", opf, count=1)
 
 
 def add_bodymatter_landmark(nav: str) -> str:

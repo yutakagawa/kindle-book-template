@@ -1,0 +1,77 @@
+name: Test scripts
+
+# scripts/ 以下のスクリプト（ビルド・表紙の生成・画像の最適化・ペーパーバック PDF・原稿のチェック）の自動テスト。
+# テストは tests/ にある。外部ツールが無いとスキップされるテストがあるが、
+# CI では REQUIRE_ALL_TOOLS=1 にして、スキップせず失敗させる（ツールの入れ忘れでテストが素通りしないように）
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PANDOC_VERSION: "3.9"
+  EPUBCHECK_VERSION: "5.3.0"
+  REQUIRE_ALL_TOOLS: "1"
+
+jobs:
+  # build.py / cover.py / images.py / paperback.py / validate.py（pytest）
+  python:
+    name: Python scripts (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-tools
+        with:
+          pandoc-version: ${{ env.PANDOC_VERSION }}
+          epubcheck-version: ${{ env.EPUBCHECK_VERSION }}
+
+      - name: Install test packages
+        run: pip install -r tests/requirements.txt
+
+      # ペーパーバック PDF のテストで Vivliostyle を使う
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install npm packages (Vivliostyle)
+        run: npm ci
+
+      # 表紙の生成・PDF のフォント埋め込みのテストに使う
+      - name: Install Japanese fonts
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q fonts-noto-cjk
+
+      - name: Use the preinstalled Chrome
+        run: |
+          chrome="$(command -v google-chrome || command -v chromium || true)"
+          if [ -n "$chrome" ]; then echo "VIVLIOSTYLE_BROWSER=$chrome" >> "$GITHUB_ENV"; fi
+
+      - name: Run pytest
+        run: python3 -m pytest -v --durations=10
+
+  # check-manuscript.mjs（Node.js の組み込みテストランナー）
+  node:
+    name: Manuscript check (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install npm packages
+        run: npm ci
+
+      # リンクのチェックで原稿を解析するために使う
+      - name: Install Pandoc
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/pandoc.deb" \
+            "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb"
+          sudo dpkg -i "$RUNNER_TEMP/pandoc.deb"
+          pandoc --version | head -1
+
+      - name: Run node --test
+        run: node --test "tests/*.test.mjs"

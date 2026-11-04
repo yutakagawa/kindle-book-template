@@ -32,6 +32,12 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
+if __name__ == "__main__":
+    # bash scripts/setup.sh が作った .venv があれば、その Python（PyYAML・Pillow 入り）で起動し直す
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from use_venv import reexec_in_venv
+    reexec_in_venv(__file__)
+
 ROOT = Path(__file__).resolve().parent.parent
 FILTERS = ROOT / "filters"
 STYLES = ROOT / "styles"
@@ -62,8 +68,8 @@ KDP_TRIM_SIZES: dict[str, tuple[float, float]] = {
 JIS_TRIM_SIZES: dict[str, tuple[float, float]] = {
     "a5": (148 / MM_PER_IN, 210 / MM_PER_IN),
     "b6": (128 / MM_PER_IN, 182 / MM_PER_IN),
-    "shinsho": (103 / MM_PER_IN, 182 / MM_PER_IN),   # 新書判（KDP のカスタム判型の最小幅 4 インチ未満なので不可）
-    "bunko": (105 / MM_PER_IN, 148 / MM_PER_IN),     # 文庫判（同上）
+    "shinsho": (103 / MM_PER_IN, 182 / MM_PER_IN),   # 新書判（約 4.06×7.17 インチ。KDP のカスタム判型の範囲内）
+    "bunko": (105 / MM_PER_IN, 148 / MM_PER_IN),     # 文庫判（高さ約 5.83 インチが KDP の最小 6 インチ未満なので不可）
 }
 # KDP のカスタム判型として受け付けられる範囲（インチ）
 CUSTOM_WIDTH = (4.0, 8.5)
@@ -129,7 +135,9 @@ def parse_trim(value, warnings: list[str]) -> tuple[str, float, float]:
         label = f"{fmt_mm(w)}×{fmt_mm(h)}"
         custom = True
     else:
-        key = str(value).strip().lower().replace("×", "x").replace(" ", "").replace("in", "").replace('"', "")
+        key = str(value).strip().lower().replace("×", "x").replace(" ", "")
+        # 単位（6inx9in / 6"x9"）は数字の直後だけ取り除く（"shinsho" の "in" を消さないように）
+        key = re.sub(r'(?<=\d)(?:in|")', "", key)
         if key in KDP_TRIM_SIZES:
             w, h = KDP_TRIM_SIZES[key]
             return f'{w:g}"×{h:g}"', w, h

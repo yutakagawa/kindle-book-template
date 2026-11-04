@@ -1,11 +1,12 @@
 # よく使うコマンドのまとめ（make が無い環境では python3 scripts/build.py を直接使う）
-PYTHON   ?= python3
+# bash scripts/setup.sh が作る .venv（Python の仮想環境）があれば、その Python を使う
+PYTHON   ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 BUILD    := $(PYTHON) scripts/build.py
 VALIDATE := $(PYTHON) scripts/validate.py
 # EPUBCheck で失敗にする重大度: fatal / error / warning（既定）/ info / usage
 FAIL_ON  ?= warning
 
-.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book listing listing-book clean setup
+.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book listing listing-book test test-python test-node clean setup
 
 all: build
 
@@ -65,6 +66,15 @@ listing:
 ## 特定の本の下書き: make listing-book BOOK=books/my-book
 listing-book:
 	$(PYTHON) scripts/kdp-listing.py $(BOOK)
+
+## scripts/ のテスト（tests/）。先に pip install -r tests/requirements.txt と npm install が必要
+test: test-python test-node
+
+test-python:
+	$(PYTHON) -m pytest
+
+test-node:
+	node --test "tests/*.test.mjs"
 
 setup:
 	bash scripts/setup.sh
