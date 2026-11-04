@@ -40,10 +40,11 @@ layout:
 
 ## 検証する
 
-`--check` を付けると、EPUBの規格チェックツールであるEPUBCheckで検証します[^epubcheck]。
+`--check` を付けると、EPUBの規格チェックツールであるEPUBCheckで検証します[^epubcheck]。エラーだけでなく、警告が1件でもあると失敗になります。
 
 ```bash
 python3 scripts/build.py --all --check
+make check-modes    # 縦書き・横書きの両方で検証
 ```
 
 ::: important

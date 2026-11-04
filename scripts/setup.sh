@@ -70,8 +70,30 @@ else
   (cd "$TOOLS" && unzip -q -o "$tmp/epubcheck.zip")
   rm -rf "$tmp"
 fi
+# ---- Java（EPUBCheck の実行に必要）-----------------------------------
+java_major() {
+  # "openjdk version "21.0.5"" / "java version "1.8.0_x"" から主バージョンを取り出す
+  local v
+  v="$(java -version 2>&1 | grep -Eo 'version "[^"]+"' | head -1 | cut -d'"' -f2)"
+  case "$v" in
+    1.*) echo "${v#1.}" | cut -d. -f1 ;;
+    *)   echo "$v" | cut -d. -f1 ;;
+  esac
+}
 if ! command -v java >/dev/null 2>&1; then
-  warn "Java が見つかりません。EPUBCheck を使うには Java 11 以上をインストールしてください（任意）"
+  warn "Java が見つかりません。EPUBCheck（make check）には Java 11 以上が必要です"
+  warn "  macOS:         brew install openjdk@21"
+  warn "  Debian/Ubuntu: sudo apt-get install -y openjdk-21-jre-headless"
+  warn "  Windows:       winget install EclipseAdoptium.Temurin.21.JRE"
+elif [ "$(java_major)" -lt 11 ] 2>/dev/null; then
+  warn "Java $(java_major) は古すぎます。EPUBCheck には Java 11 以上が必要です"
+else
+  # EPUBCheck が実際に起動できるか確認する
+  if java -jar "$TOOLS/epubcheck-${EPUBCHECK_VERSION}/epubcheck.jar" --version >/dev/null 2>&1; then
+    info "EPUBCheck ${EPUBCHECK_VERSION} を確認しました（Java $(java_major)）"
+  else
+    warn "EPUBCheck を起動できませんでした: java -jar tools/epubcheck-${EPUBCHECK_VERSION}/epubcheck.jar --version"
+  fi
 fi
 
-info "完了しました。'make' でサンプルの EPUB をビルドできます"
+info "完了しました。'make' でビルド、'make check' でビルドと EPUBCheck による検証ができます"

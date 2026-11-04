@@ -4,10 +4,12 @@
 使い方:
     python3 scripts/build.py books/horizontal-sample          # 1 冊ビルド
     python3 scripts/build.py --all                            # books/ 以下を全部ビルド
-    python3 scripts/build.py books/my-book --check            # ビルド後に EPUBCheck で検証
+    python3 scripts/build.py books/my-book --check            # ビルド後に EPUBCheck で検証（警告以上で失敗）
     python3 scripts/build.py books/my-book --writing-mode horizontal   # 設定を一時的に上書き
+    python3 scripts/build.py books/my-book --no-optimize-images        # 画像を最適化せずに使う
 
 出力先は dist/<本のディレクトリ名>.epub（book.yaml の output で変更可）。
+画像は Kindle 向けに最適化した版を dist/.image-cache/<本のディレクトリ名>/ に作って使う（scripts/images.py）。
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -159,10 +160,8 @@ def build_metadata(cfg: dict, book_dir: Path, writing_mode: str, warnings: list[
         "page-progression-direction": "rtl" if writing_mode == "vertical" else "ltr",
         "toc-title": layout.get("toc_title", "目次"),
     }
-    # pandoc の扉ページ（title_page.xhtml）用
-    meta["author"] = [a["text"] for a in authors]
-    if cfg.get("subtitle"):
-        meta["subtitle"] = cfg["subtitle"]
+    # 扉ページ（title_page.xhtml）は title（main / subtitle）と creator から作られる。
+    # pandoc の author / subtitle も設定すると、扉に著者名と副題が重複して出るため設定しない。
 
     for key in ("publisher", "rights", "description"):
         if cfg.get(key):
@@ -239,14 +238,28 @@ def build_book(book_dir: Path, args) -> Path:
             raise BuildError(f"原稿が見つかりません: {c}")
 
     warnings: list[str] = []
-    meta = build_metadata(cfg, book_dir, writing_mode, warnings)
-
     out_dir = Path(args.output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     out_name = cfg.get("output") or f"{book_dir.name}.epub"
     if args.writing_mode and not cfg.get("output"):
         out_name = f"{book_dir.name}-{writing_mode}.epub"
     output = out_dir / out_name
+
+    # cover_design があれば表紙を生成し（dist/<名前>-cover.jpg）、EPUB の表紙として使う
+    if str(ROOT / "scripts") not in sys.path:
+        sys.path.insert(0, str(ROOT / "scripts"))
+    from cover import CoverError, design_enabled, generate_book_cover
+    if design_enabled(cfg):
+        try:
+            cover_path = generate_book_cover(book_dir, cfg, output.with_name(output.stem + "-cover.jpg"),
+                                             writing_mode, warnings)
+        except CoverError as e:
+            raise BuildError(f"表紙を生成できません: {e}")
+        log(f"表紙を生成しました: {cover_path.name}")
+        cfg = {**cfg, "cover": str(cover_path)}
+
+    meta = build_metadata(cfg, book_dir, writing_mode, warnings)
+    optimize_images(book_dir, cfg, meta, out_dir, args, warnings)
 
     ver = pandoc_version(args.pandoc)
     theme = layout.get("highlight_style") or str(STYLES / "kindle.theme")
@@ -276,6 +289,7 @@ def build_book(book_dir: Path, args) -> Path:
             "--split-level", "1",
             f"{highlight_flag}={theme}",
             "--resource-path", os.pathsep.join([str(book_dir), str(book_dir / "images")]),
+            "--lua-filter", str(FILTERS / "images.lua"),
             "--lua-filter", str(FILTERS / "linebreaks.lua"),
             "--lua-filter", str(FILTERS / "crossref.lua"),
             "--lua-filter", str(FILTERS / "admonition.lua"),
@@ -307,6 +321,35 @@ def build_book(book_dir: Path, args) -> Path:
     if args.check:
         run_epubcheck(output, args)
     return output
+
+
+def optimize_images(book_dir: Path, cfg: dict, meta: dict, out_dir: Path, args, warnings: list[str]) -> None:
+    """原稿の画像を Kindle 向けに最適化し、pandoc がその版を使うよう meta を書き換える。"""
+    images_cfg = cfg.get("images") or {}
+    if args.no_optimize_images or (isinstance(images_cfg, dict) and images_cfg.get("optimize") is False):
+        log("画像の最適化は無効です（元画像をそのまま使います）")
+        return
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        warnings.append("Pillow が無いため画像を最適化していません（pip install -r requirements.txt）")
+        return
+    import images
+
+    cover = Path(meta["cover-image"]) if meta.get("cover-image") else None
+    try:
+        report = images.optimize_book_images(book_dir, cfg, out_dir / ".image-cache", cover)
+    except ValueError as e:
+        raise BuildError(str(e))
+    if not report.results:
+        return
+    meta["kbt"]["images"] = report.mapping
+    if report.cover:
+        meta["cover-image"] = str(report.cover)
+    log(f"画像の最適化（{len(report.results)} 枚）:")
+    for line in images.format_report(report.results):
+        log("  " + line)
+    warnings.extend(report.warnings)
 
 
 def postprocess(epub: Path, writing_mode: str) -> None:
@@ -354,28 +397,18 @@ def add_bodymatter_landmark(nav: str) -> str:
     return re.sub(r'(<nav epub:type="landmarks"[^>]*>\s*<ol>\s*)', lambda mm: mm.group(1) + item, nav, count=1)
 
 
-def find_epubcheck(args) -> list[str] | None:
-    jar = args.epubcheck_jar or os.environ.get("EPUBCHECK_JAR")
-    if jar:
-        return ["java", "-jar", jar]
-    # scripts/setup.sh が tools/ に展開したもの
-    local = sorted((ROOT / "tools").glob("epubcheck*/epubcheck.jar"))
-    if local:
-        return ["java", "-jar", str(local[-1])]
-    exe = shutil.which("epubcheck")
-    if exe:
-        return [exe]
-    return None
-
-
 def run_epubcheck(epub: Path, args) -> None:
-    cmd = find_epubcheck(args)
-    if not cmd:
-        raise BuildError("EPUBCheck が見つかりません。scripts/setup.sh を実行するか、EPUBCHECK_JAR 環境変数に epubcheck.jar のパスを設定してください")
-    log(f"EPUBCheck で検証します: {epub.name}")
-    result = subprocess.run(cmd + [str(epub)])
-    if result.returncode != 0:
-        raise BuildError(f"EPUBCheck でエラーが見つかりました: {epub.name}")
+    """scripts/validate.py で検証する。警告以上（--fail-on で変更可）があれば失敗にする。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import validate
+
+    try:
+        cmd = validate.find_epubcheck(args.epubcheck_jar)
+        ok, _ = validate.validate(epub, cmd, args.fail_on, Path(args.report_dir) if args.report_dir else None)
+    except validate.ValidationError as e:
+        raise BuildError(str(e))
+    if not ok:
+        raise BuildError(f"EPUBCheck で {args.fail_on} 以上のメッセージが見つかりました: {epub.name}")
 
 
 def main(argv=None) -> int:
@@ -384,8 +417,12 @@ def main(argv=None) -> int:
     parser.add_argument("--all", action="store_true", help="books/ 以下の全ての本をビルド")
     parser.add_argument("--writing-mode", choices=["vertical", "horizontal"], help="book.yaml の layout.writing_mode を一時的に上書き")
     parser.add_argument("-o", "--output-dir", default=str(ROOT / "dist"), help="出力ディレクトリ（既定: dist）")
-    parser.add_argument("--check", action="store_true", help="ビルド後に EPUBCheck で検証")
+    parser.add_argument("--check", action="store_true", help="ビルド後に EPUBCheck で検証（警告以上で失敗）")
+    parser.add_argument("--fail-on", choices=["fatal", "error", "warning", "info", "usage"], default="warning",
+                        help="--check で失敗にする重大度（既定: warning）")
+    parser.add_argument("--report-dir", help="--check の JSON レポートを保存するディレクトリ")
     parser.add_argument("--epubcheck-jar", help="epubcheck.jar のパス（EPUBCHECK_JAR 環境変数でも可）")
+    parser.add_argument("--no-optimize-images", action="store_true", help="画像を最適化せず元画像をそのまま使う")
     parser.add_argument("--pandoc", default=os.environ.get("PANDOC", "pandoc"), help="pandoc の実行ファイル")
     parser.add_argument("-v", "--verbose", action="store_true", help="pandoc のコマンドラインを表示")
     args = parser.parse_args(argv)

@@ -6,8 +6,10 @@ Markdown で書いた原稿から、**Kindle Direct Publishing（KDP）にその
 - `book.yaml` の 1 行で **縦書き（右綴じ）と横書き（左綴じ）を切り替え**
 - 縦書きでも **コードブロック・表・英数字** が読みやすいように CSS を調整済み
 - 見出し／自動目次／シンタックスハイライト／表／図番号／囲み／脚注／ルビに対応
+- 原稿の画像をビルド時に **Kindle 向けに自動で最適化**（縮小・透過の除去・形式変換。元画像はそのまま）
 - **ISBN なし**で出版できるメタデータ（固定 UUID）を `book.yaml` で管理
-- **GitHub Actions** で push のたびに縦書き版・横書き版の両方をビルドし、EPUBCheck で検証
+- **EPUBCheck** で検証し、エラーだけでなく**警告が 1 件でもあれば失敗**にする（`make check`）
+- **GitHub Actions** で push のたびに全ての本を縦書き版・横書き版の両方でビルドし、EPUBCheck で検証
 - `npm run lint` で **表記ゆれ・文章・リンク切れ** をまとめてチェック（[原稿のチェック](#原稿のチェック)）
 
 ```bash
@@ -21,16 +23,19 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 1. [ディレクトリ構成](#ディレクトリ構成)
 2. [セットアップ](#セットアップ)
 3. [ビルド方法](#ビルド方法)
-4. [新しい本を作る](#新しい本を作る)
-5. [設定ファイル book.yaml](#設定ファイル-bookyaml)
-6. [原稿の書き方](#原稿の書き方)
-7. [原稿のチェック](#原稿のチェック)
-8. [縦書きの表示の工夫](#縦書きの表示の工夫)
-9. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
-10. [KDP へのアップロード手順](#kdp-へのアップロード手順)
-11. [GitHub Actions](#github-actions)
-12. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
-13. [トラブルシューティング](#トラブルシューティング)
+4. [EPUBCheck による検証](#epubcheck-による検証)
+5. [新しい本を作る](#新しい本を作る)
+6. [設定ファイル book.yaml](#設定ファイル-bookyaml)
+7. [表紙の自動生成](#表紙の自動生成)
+8. [原稿の書き方](#原稿の書き方)
+9. [画像の最適化](#画像の最適化)
+10. [原稿のチェック](#原稿のチェック)
+11. [縦書きの表示の工夫](#縦書きの表示の工夫)
+12. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
+13. [KDP へのアップロード手順](#kdp-へのアップロード手順)
+14. [GitHub Actions](#github-actions)
+15. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
+16. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -46,6 +51,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   └── vertical-sample/       # 縦書き版サンプル（実用書: 小さな自動化のすすめ）
 │       └── textlint.json      #   この本だけのチェック設定（漢数字を許可）
 ├── filters/                   # Pandoc の Lua フィルタ
+│   ├── images.lua             #   画像の参照先を最適化版に差し替える
 │   ├── linebreaks.lua         #   日本語の改行で空白が入らないようにする
 │   ├── crossref.lua           #   章番号・図/表/リスト番号・相互参照
 │   ├── admonition.lua         #   注意書きなどの囲み
@@ -58,6 +64,9 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   └── kindle.theme           #   シンタックスハイライトの配色（E-ink でも区別できる）
 ├── scripts/
 │   ├── build.py               # ビルドスクリプト（本体）
+│   ├── cover.py               # 表紙画像の自動生成
+│   ├── images.py              # 画像の Kindle 向け最適化（build.py から呼ばれる）
+│   ├── validate.py            # EPUBCheck による検証（警告以上で失敗）
 │   ├── check-manuscript.mjs   # 原稿のチェック（npm run lint）
 │   └── setup.sh               # ツールのインストール
 ├── lint/                      # 原稿のチェックの設定
@@ -65,9 +74,10 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   ├── dict/project.yml       #   プロジェクト独自の表記ルール（辞書）
 │   ├── linkcheck.json         #   リンクチェックの設定
 │   └── textlint-plugin-pandoc/#   Pandoc の記法を textlint に正しく読ませるプラグイン
-├── .github/workflows/
-│   ├── build.yml              # EPUB のビルドと EPUBCheck
-│   └── lint.yml               # 原稿のチェック
+├── .github/
+│   ├── workflows/build.yml    # CI（ビルド + 縦書き・横書きの両方で検証）
+│   ├── workflows/lint.yml     # CI（原稿のチェック）
+│   └── actions/setup-tools/   # CI 用のツールのセットアップ
 ├── .textlintrc.json           # textlint のルール設定
 ├── package.json               # チェック用ツール（Node.js）
 ├── Makefile
@@ -82,6 +92,7 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 |:--|:--|:--|
 | [Pandoc](https://pandoc.org/) 3.1 以上（CI は 3.9 に固定） | Markdown → EPUB3 変換 | EPUB3 を直接出力でき、目次（nav / NCX）・脚注（`epub:type="noteref"`）・シンタックスハイライト・綴じ方向（`page-progression-direction`）に標準対応。Lua フィルタで日本語向けの拡張を足せる |
 | Python 3.9 以上 + PyYAML | ビルドスクリプト・設定ファイルの読み込み | macOS / Linux / Windows のどれでも動く |
+| [Pillow](https://python-pillow.org/)（推奨） | 画像の最適化・表紙の確認 | Python 製で追加のネイティブツール（ImageMagick など）が要らない。無い場合は最適化をスキップして元画像を使う |
 | [EPUBCheck](https://www.w3.org/publishing/epubcheck/)（任意・Java 11 以上） | EPUB の規格チェック | W3C 公式の検証ツール。KDP でのエラーを事前に減らせる |
 | [Kindle Previewer 3](https://kdp.amazon.co.jp/ja_JP/help/topic/G202131170)（任意） | Kindle での見え方の確認 | Amazon 公式。KDP と同じ変換エンジンで表示できる |
 | [Node.js](https://nodejs.org/) 20 以上 + [textlint](https://textlint.org/)（任意） | 原稿のチェック | 日本語の表記ゆれ・技術文書向けのルールが最も充実している校正ツール（[詳細](#チェックの内容とツール)） |
@@ -96,7 +107,7 @@ bash scripts/setup.sh
 
 - pandoc が無ければインストール（macOS は Homebrew、Debian/Ubuntu は公式 .deb）
 - `pip install -r requirements.txt`（PyYAML・Pillow）
-- EPUBCheck を `tools/` にダウンロード（Java が必要）
+- EPUBCheck を `tools/` にダウンロードし、Java で起動できるか確認（Java 11 以上が無ければインストール方法を表示）
 
 原稿のチェックを使う場合は、Node.js 20 以上を入れてから、リポジトリのルートで `npm install` を実行します。
 
@@ -104,7 +115,7 @@ bash scripts/setup.sh
 
 1. Pandoc をインストール: `winget install --id JohnMacFarlane.Pandoc`（または [公式インストーラ](https://pandoc.org/installing.html)）
 2. Python をインストールして `py -m pip install -r requirements.txt`
-3. （任意）EPUBCheck: [リリースページ](https://github.com/w3c/epubcheck/releases) から zip を取得し、展開した `epubcheck.jar` のパスを環境変数 `EPUBCHECK_JAR` に設定
+3. （任意）EPUBCheck: 下の「[EPUBCheck による検証](#epubcheck-による検証)」を参照
 4. （任意）原稿のチェック: `winget install OpenJS.NodeJS.LTS` で Node.js を入れ、`npm install`
 
 `make` が無い場合は `py scripts\build.py --all` のように直接実行してください（WSL を使うと macOS / Linux と同じ手順でビルドできます）。
@@ -113,7 +124,9 @@ bash scripts/setup.sh
 
 ```bash
 make                 # books/ 以下の全ての本をビルド → dist/*.epub
-make check           # ビルド後に EPUBCheck で検証
+make check           # ビルド後に EPUBCheck で検証（警告が 1 件でもあれば失敗）
+make check-modes     # 全ての本を縦書き・横書きの両方でビルドして検証（CI と同じ）
+make validate        # ビルド済みの dist/*.epub を検証するだけ
 make vertical        # 縦書きサンプルだけ
 make horizontal      # 横書きサンプルだけ
 make book BOOK=books/my-book
@@ -131,10 +144,68 @@ python3 scripts/build.py books/my-book -v         # 実行した pandoc のコ�
 | オプション | 意味 |
 |:--|:--|
 | `--all` | `books/*/book.yaml` がある全ての本をビルド |
-| `--check` | ビルド後に EPUBCheck を実行（`tools/epubcheck*/epubcheck.jar` → `EPUBCHECK_JAR` → `epubcheck` コマンドの順に探す） |
+| `--check` | ビルド後に EPUBCheck で検証（[詳細](#epubcheck-による検証)） |
+| `--fail-on LEVEL` | `--check` で失敗にする重大度。`fatal` / `error` / `warning`（既定）/ `info` / `usage` |
+| `--report-dir DIR` | `--check` の結果を JSON レポートとして保存 |
 | `--writing-mode vertical\|horizontal` | `layout.writing_mode` を一時的に上書き |
-| `-o DIR` | 出力先（既定 `dist/`） |
+| `-o DIR` | 出力先（既定 `dist/`）。最適化した画像は `DIR/.image-cache/` に置かれる |
+| `--no-optimize-images` | 画像を最適化せず、元画像をそのまま使う |
 | `--pandoc PATH` | 使う pandoc（環境変数 `PANDOC` でも可） |
+
+## EPUBCheck による検証
+
+[EPUBCheck](https://www.w3.org/publishing/epubcheck/) は W3C 公式の EPUB 検証ツールです。KDP は EPUBCheck の結果をそのまま使うわけではありませんが、規格違反があると変換で内容が欠けたり、アップロード時にエラーになったりする原因になるため、**エラーと警告がともに 0 件**の状態を保ちます。
+
+### 必要なツール
+
+| ツール | 入れ方 |
+|:--|:--|
+| Java 11 以上 | macOS: `brew install openjdk@21` / Debian・Ubuntu: `sudo apt-get install -y openjdk-21-jre-headless` / Windows: `winget install EclipseAdoptium.Temurin.21.JRE` |
+| EPUBCheck 5.3.0 | `bash scripts/setup.sh` で `tools/epubcheck-5.3.0/` に展開される（CI と同じバージョン）。macOS は `brew install epubcheck` でも可 |
+
+手動で入れる場合は [リリースページ](https://github.com/w3c/epubcheck/releases) から `epubcheck-5.3.0.zip` を取得して展開し、`epubcheck.jar` の場所を次のどれかで指定します。
+
+- `tools/` の下に展開する（`tools/epubcheck-5.3.0/epubcheck.jar`）
+- 環境変数 `EPUBCHECK_JAR=/path/to/epubcheck.jar`（Windows: `set EPUBCHECK_JAR=C:\path\to\epubcheck.jar`）
+- `--epubcheck-jar /path/to/epubcheck.jar` オプション
+
+検索順は `--epubcheck-jar` → `EPUBCHECK_JAR` → `tools/epubcheck-*/epubcheck.jar`（新しい版を優先）→ `PATH` 上の `epubcheck` コマンドです。インストールできたかは `java -jar tools/epubcheck-5.3.0/epubcheck.jar --version` で確認できます。
+
+### 実行方法
+
+```bash
+make check                                   # 全ての本をビルドして検証
+make check-modes                             # 全ての本を縦書き・横書きの両方でビルドして検証（CI と同じ）
+make validate                                # dist/*.epub を検証するだけ
+make validate EPUB=dist/my-book.epub         # 特定の EPUB を検証
+python3 scripts/validate.py dist/*.epub --report-dir dist/reports   # JSON レポートも保存
+```
+
+出力例:
+
+```text
+[epubcheck] 検証: dist/vertical-sample.epub
+[epubcheck]   EPUBCheck 5.3.0・EPUB 3.3: 0 fatal / 0 error / 0 warning / 0 info / 0 usage
+[epubcheck]   ✓ 問題ありません
+```
+
+問題があると、次のように場所（EPUB 内のファイル・行・列）とメッセージが表示され、終了コード 1 で終わります。
+
+```text
+  ERROR(RSC-007): my-book.epub/EPUB/nav.xhtml(14,120): Referenced resource "EPUB/text/missing.xhtml" could not be found in the EPUB.
+```
+
+### 失敗にする基準
+
+EPUBCheck 本体は警告があっても終了コード 0 を返すため、`scripts/validate.py` が JSON レポート（`--json`）を読んで判定します。
+
+| 重大度 | 意味 | 既定の扱い |
+|:--|:--|:--|
+| FATAL / ERROR | 規格違反。リーダーや KDP で正しく処理されない可能性が高い | **失敗** |
+| WARNING | 規格上は許されるが問題になりやすい書き方 | **失敗** |
+| INFO / USAGE | 参考情報・非推奨の書き方（EPUBCheck の `-u` で表示） | 表示のみ |
+
+基準は `make check FAIL_ON=usage`（もっとも厳しい）や `--fail-on error`（警告を許す）で変えられます。このテンプレートのサンプルは USAGE まで含めて 0 件です。
 
 ## 新しい本を作る
 
@@ -202,6 +273,7 @@ layout:
 | `isbn` | – | ISBN（10 桁 / 13 桁）。あれば識別子は ISBN になる |
 | `uuid` | 推奨 | ISBN が無い場合の識別子。**本ごとに固定**。省略するとタイトルと著者から生成（警告が出る） |
 | `cover` | 推奨 | 表紙画像。比率やサイズが KDP の推奨から外れると警告が出る |
+| `cover_design` | – | 書いておくと表紙を自動生成して使う（`cover` より優先）。[表紙の自動生成](#表紙の自動生成)参照 |
 | `chapters` | – | 原稿の順番。省略すると `chapters/*.md` をファイル名順 |
 | `layout.writing_mode` | – | `horizontal`（既定）か `vertical` |
 | `layout.toc_depth` | – | 目次に載せる見出しの深さ（既定 2 = 節まで） |
@@ -210,9 +282,101 @@ layout:
 | `layout.highlight_style` | – | ハイライト配色。pandoc の `.theme` ファイルか `tango` などの名前 |
 | `layout.vertical.code_blocks` / `tables` | – | 縦書き時のコード・表の表示方式（[後述](#縦書きの表示の工夫)） |
 | `layout.vertical.tcy_digits` | – | 何桁までの数字を縦中横にするか（既定 2） |
+| `images.*` | – | 画像の最適化の設定（[後述](#画像の最適化)） |
 | `css` | – | 追加の CSS ファイル（本のディレクトリからの相対パス） |
 | `fonts` | – | 埋め込むフォント（通常は不要。[設計上の判断](#設計上の判断kdp-ガイドラインに基づいて決めたこと)参照） |
 | `output` | – | 出力ファイル名（既定 `<ディレクトリ名>.epub`） |
+
+## 表紙の自動生成
+
+`scripts/cover.py` は、`book.yaml` のタイトル・サブタイトル・著者名から **KDP の推奨値どおりの表紙画像** を作ります。背景は単色・グラデーション・任意の画像から選べ、縦書き（右上から縦組み）と横書き（中央揃えの横組み）の 2 種類のデザインがあります。
+
+### 使い方
+
+`book.yaml` に `cover_design` を書くと、**ビルドのたびに表紙が作り直され、EPUB の表紙として自動で埋め込まれます**（`cover` を書いていても、こちらが優先されます）。
+
+```yaml
+cover_design: {}          # これだけでも既定のデザインで生成する
+```
+
+```bash
+make book BOOK=books/my-book
+# → dist/my-book.epub と dist/my-book-cover.jpg（KDP に別途アップロードする表紙）
+```
+
+表紙だけを作る・試すときは、スクリプトを直接実行します（`cover_design` が無い本でも使えます）。
+
+```bash
+python3 scripts/cover.py books/my-book                     # → dist/my-book-cover.jpg
+python3 scripts/cover.py --all                             # books/ 以下の全ての本
+python3 scripts/cover.py books/my-book --style vertical    # デザインを一時的に切り替え
+python3 scripts/cover.py books/my-book --background photo.jpg -o cover.jpg
+python3 scripts/cover.py books/my-book -o cover.tif        # TIFF で保存
+```
+
+### 設定（cover_design）
+
+```yaml
+cover_design:
+  style: auto                     # auto（layout.writing_mode に合わせる）/ vertical / horizontal
+  colors: ["#14213d", "#2c4f7c"]  # 1 色なら単色、2 色以上ならグラデーション
+  gradient: diagonal              # vertical / horizontal / diagonal / radial
+  background: images/cover-bg.jpg # 背景画像（任意）。指定すると colors の代わりに使う
+  overlay: 0.35                   # 背景画像を暗くする割合（0〜1）。文字を読みやすくする
+  text_color: auto                # auto = 背景の明るさから白か黒を選ぶ。"#ffffff" なども可
+  accent_color: "#e2b450"         # 飾り罫の色
+  font: sans                      # serif（明朝）/ sans（ゴシック）/ フォントファイルのパス
+  title: "Markdownで作る\nKindle技術書"   # 表紙だけの書き方（\n で改行位置を指定）
+  author_suffix: " 著"
+```
+
+| キー | 既定 | 説明 |
+|:--|:--|:--|
+| `style` | `auto` | `vertical`（縦書き）/ `horizontal`（横書き）。`auto` は `layout.writing_mode`（`--writing-mode` で上書きしたときはその値）に合わせる |
+| `colors` | デザインごと | 背景色。縦書きは生成り色、横書きは紺のグラデーション |
+| `gradient` | デザインごと | グラデーションの向き |
+| `background` | – | 背景画像（本のディレクトリからの相対パス）。縦横比が違う場合は中央を基準に切り抜く。`background_position: top` などで切り抜く位置を変えられる |
+| `overlay` / `overlay_color` | `0.35` / 黒 | 背景画像に重ねる色と濃さ |
+| `shadow` | 背景画像のときだけ `true` | 文字に影を付ける |
+| `text_color` / `accent_color` | `auto` / デザインごと | 文字と飾り罫の色 |
+| `decoration` | `true` | 飾り罫（横書きはタイトル下の線、縦書きは枠と縦線）を描くか |
+| `font` | 縦書き `serif`・横書き `sans` | 全体のフォント。`title_font` / `subtitle_font` / `author_font` で個別にも指定できる |
+| `title` / `subtitle` / `author` | `book.yaml` の値 | 表紙だけ表記を変えたいとき。`subtitle: ""` でサブタイトルを出さない。複数の著者は「・」でつなぐ |
+| `author_suffix` | – | 著者名の後ろに付ける文字（`" 著"` など） |
+| `width` / `height` | `1600` / `2560` | 通常は変更不要 |
+
+### 文字の配置（はみ出さないための処理）
+
+- タイトル・サブタイトル・著者名はそれぞれ決まった枠に置き、**枠に収まる最大の文字サイズ**を自動で選ぶ。長い文字列は自動で改行し、それでも収まらなければ縮小する
+- 改行は **禁則処理**（句読点・閉じ括弧・小書きの仮名・長音を行頭に置かない、開き括弧を行末に置かない）をしたうえで、行の長さがなるべく揃い、単語の途中（「自動｜化」「作｜る」など）で切れにくい位置を選ぶ。英単語は途中で切らない
+- 改行位置を自分で決めたいときは、`cover_design.title` などに `\n` を入れる
+- 文字が小さくなりすぎた（サムネイルで読みにくい）ときは警告が出る。枠にどうしても収まらないときはエラーになる
+- 縦書きでは、フォントの縦書き用字形（OpenType の `vert`）で句読点・括弧・長音・小書きの仮名を正しい向き・位置にし、2 桁までの数字と 1 文字の英字は縦中横、それ以外の英単語は横倒しにする（Pillow が libraqm なしの場合は回転・位置ずらしで近似し、警告が出る）
+
+### フォント
+
+日本語フォントは自動で探します（明朝: Noto Serif CJK JP → 源ノ明朝 → BIZ UD明朝 → ヒラギノ明朝 → 游明朝 → IPAex明朝 …、ゴシック: Noto Sans CJK JP → 源ノ角ゴシック → BIZ UDゴシック → ヒラギノ角ゴシック → 游ゴシック → メイリオ → IPAexゴシック …）。タイトルは太字、そのほかは中くらいの太さを選びます。
+
+| OS | 必要な作業 |
+|:--|:--|
+| macOS / Windows | 不要（ヒラギノ・游書体などの標準フォントを使う） |
+| Ubuntu / Debian / WSL | `sudo apt install fonts-noto-cjk` |
+
+市販のフォントなどを使うときは `font: fonts/MyFont-Bold.otf` のようにパスを書きます（`.ttc` の場合は `font: {path: ..., index: 1}` で番号を指定）。**表紙に使うフォントのライセンスが商用の画像に使えるものか確認してください**（Noto CJK・IPA フォントは使えます）。
+
+### 出力形式（KDP の推奨値に合わせたこと）
+
+| 項目 | 値 | 根拠（KDP ヘルプ「電子書籍の表紙の作成」） |
+|:--|:--|:--|
+| サイズ | 幅 1600 × 高さ 2560 px | 理想のサイズは高さ 2,560 × 幅 1,600 px（高さ:幅 = 1.6:1）。最小は高さ 1,000 × 幅 625 px、最大 10,000 px |
+| 形式 | JPEG（品質 92、色差の間引きなしで文字をくっきりさせる）。`-o *.tif` で TIFF | 受け付ける形式は JPEG と TIFF |
+| 色 | RGB（sRGB の ICC プロファイルを埋め込む） | RGB が必要（CMYK は不可） |
+| 解像度 | 300 ppi | 推奨の解像度は 300 ppi 以上 |
+| ファイルサイズ | 50MB を超えたらエラー（通常は 1MB 未満） | 50MB 以下 |
+
+KDP ではタイトル・著者名が書誌情報と一致していることが求められるため、表紙の文字は `book.yaml` の値をそのまま使います（表記を変えるときは KDP の入力欄とも合わせてください）。EPUB には JPEG を埋め込みます（EPUB の表紙に TIFF は使えないため）。
+
+> このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の値は KDP ヘルプの検索結果と既知の内容に基づいています。アップロード前に [電子書籍の表紙の作成（KDP ヘルプ）](https://kdp.amazon.co.jp/ja_JP/help/topic/G6GTK3T3NUHKLEFX) で最新の値を確認してください。
 
 ## 原稿の書き方
 
@@ -283,7 +447,7 @@ const res = await fetch(url);
 ```
 
 - キャプションがある画像には「図1.1」のような番号が付く
-- 画像は `images/` に置く。JPEG（写真）か PNG（図）を使い、幅 1,200px 以上を目安にする
+- 画像は `images/` に置く。JPEG（写真）か PNG（図）を使い、幅 1,200px 以上を目安にする（大きすぎる画像や透過 PNG はビルド時に[自動で調整](#画像の最適化)される）
 - 段落の途中に置いた画像は図にならない（キャプション・番号なし）
 
 ### 相互参照
@@ -340,6 +504,69 @@ const res = await fetch(url);
 | `[ABC]{.sideways}` | 横倒し（縦書きのみ） |
 | `::: pagebreak` → `:::` | 改ページ |
 | `::: center` / `::: right` → `:::` | 中央揃え / 右（縦書きでは下）揃え |
+
+## 画像の最適化
+
+ビルドのたびに、本のディレクトリ内の画像（表紙を含む）を Kindle 向けに最適化してから EPUB に入れます。**原稿の書き方を変える必要はありません**。`![説明](images/photo.png)` と書けば、EPUB には `photo.png` の最適化版が入ります。
+
+- **元画像は変更しません。** 最適化版は `dist/.image-cache/<本のディレクトリ名>/` に、元と同じフォルダ構成で作られます
+- **変更のない画像は再処理しません。** 元画像の内容（SHA-256）と設定が前回と同じなら、キャッシュをそのまま使います。画像を差し替えたり設定を変えたりした分だけ処理し直し、消した画像の最適化版は削除します
+- キャッシュを作り直したいときは `make clean`（`dist/` ごと削除）
+
+### 行う処理
+
+| 対象 | 処理 | 理由 |
+|:--|:--|:--|
+| 幅 1600px・高さ 2560px を超える画像 | 縦横比を保って縮小（拡大はしない） | Kindle の画面に対して 300ppi 相当あれば十分。大きすぎる画像はファイルが重くなり、70% ロイヤリティの配信料（MB 単位）も増える |
+| 透過 PNG・透過 GIF | 白背景（`images.background`）に合成して透過を消す | Kindle Publishing Guidelines は透過を含む画像に非対応としている。ダークモードで透過部分が黒くなり、黒い線画が見えなくなる |
+| TIFF・BMP・WebP | 図（256 色以下）は PNG、写真は JPEG に変換 | Kindle は TIFF に非対応。KDP の本文画像は JPEG・PNG・GIF が基本 |
+| GIF | PNG に変換。アニメーション GIF は 1 フレーム目だけ | Kindle はアニメーション GIF に非対応 |
+| CMYK・16 ビット | 8 ビットの RGB（グレースケール画像はグレースケールのまま） | 端末は RGB で表示する。CMYK は色が大きく変わることがある |
+| EXIF の回転情報 | 回転を反映してからメタデータを削除 | 端末によっては回転情報が無視され、横倒しで表示されるため |
+| 5MB を超える画像 | JPEG は画質を段階的に下げる。PNG は JPEG に切り替える | 1 枚が大きすぎると変換・配信で問題になる（目安として 5MB を上限にしている） |
+| PNG（変更不要なもの） | 可逆圧縮で再圧縮し、小さくなったときだけ採用 | 画質を変えずにファイルを小さくする |
+| JPEG（変更不要なもの） | そのまま使う | 再圧縮すると画質が落ちるため |
+| 表紙（`cover`） | 1600×2560px 以内の JPEG にする | KDP の表紙の推奨（1600×2560px・RGB・JPEG） |
+| SVG | そのまま使う | 変換しない |
+
+幅が 600px（`images.min_width`）未満の画像は、Kindle で粗く見える可能性があるため警告が出ます（拡大はしません）。
+
+### ビルド時の一覧
+
+最適化の前後のサイズが一覧で表示されます（表示例）。
+
+```text
+[build] 画像の最適化（5 枚）:
+[build]   画像               最適化前           最適化後          削減  処理
+[build]   images/alpha.png  3000×1200    21KB   1600×640    37KB  -73%  透過→背景合成、縮小 3000×1200→1600×640
+[build]   images/cover.jpg  1600×2560   186KB  1600×2560   186KB    0%  キャッシュ: 変更なし
+[build]   images/photo.jpg  5000×3500  21.5MB  1600×1120   707KB   97%  縮小 5000×3500→1600×1120
+[build]   images/scan.tiff  1800×1200   6.2MB  1600×1067   3.7MB   40%  TIFF→PNG、縮小 1800×1200→1600×1067
+[build]   images/steps.png   1600×520    36KB   1600×520    36KB    0%  キャッシュ: 変更なし
+[build]   ----------------  ---------  ------  ---------  ------  ----  ------------------------------
+[build]   合計                         27.9MB              4.6MB   84%  3 枚を処理、2 枚はキャッシュ
+```
+
+「キャッシュ:」が付いた行は、前回の結果を再利用したものです。透過を消した画像は、白背景の分だけ最適化後のほうが大きくなることがあります（削減がマイナス）。
+
+### 設定（book.yaml）
+
+既定値のままで使えます。変えたいものだけ書いてください。
+
+```yaml
+images:
+  optimize: true          # false で最適化しない（コマンドの --no-optimize-images でも可）
+  max_width: 1600         # 本文の画像の最大幅（px）
+  max_height: 2560        # 本文の画像の最大高さ（px）
+  jpeg_quality: 85        # JPEG に書き出すときの画質（1〜95）
+  max_file_size_kb: 5120  # 1 枚あたりの上限（KB）
+  background: "#ffffff"   # 透過部分を合成する背景色
+  min_width: 600          # これより幅が小さい画像は警告する
+```
+
+画像の処理には Pillow を使います（`pip install -r requirements.txt` で入ります）。Pillow が無い場合は警告を出して最適化を省略し、元画像をそのまま使います。
+
+> **注記:** このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の数値は、ほかのサイトに引用されていた Kindle Publishing Guidelines の記述（画像は表示サイズに対して 300ppi 相当、72ppi 未満は変換に失敗する、透過画像・TIFF・アニメーション GIF は非対応）と KDP ヘルプの表紙の推奨値をもとに決めています。1 枚あたり 5MB の上限は公式の数値として確認できなかったため、安全側の目安です。出版前に最新の [Kindle Publishing Guidelines](https://kdp.amazon.co.jp/ja_JP/help/topic/G200645680) を確認してください。
 
 ## 原稿のチェック
 
@@ -519,6 +746,26 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 
 問題が無ければ、KDP には **EPUB をそのままアップロード** します。
 
+### EPUBCheck を通っても Kindle Previewer で確認が必要な点
+
+EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで、Kindle 形式（KF8 / KFX）に変換したときの見え方は調べません。次の点は EPUBCheck が 0 件でも Kindle Previewer で確認してください。
+
+| 確認すること | 理由・対処 |
+|:--|:--|
+| **変換時の警告**（Kindle Previewer で本を開いたときのメッセージ、メニューの変換ログ） | Kindle 独自の変換で出る警告は EPUBCheck とは別物。警告が出たら内容を確認する |
+| **Enhanced Typesetting が有効になっているか** | 縦書き・ルビ・縦中横などの日本語組版は Enhanced Typesetting で処理される。無効になっていたら、変換ログの原因（未対応の CSS など）を直す |
+| **綴じ方向とページ送り**（縦書きは右綴じ） | `page-progression-direction` と Kindle 独自の `primary-writing-mode` メタデータで指定している。後者は EPUB の規格外のため EPUBCheck は確認しない |
+| **縦書き用 CSS が効いているか**（縦中横・英字の向き・`sideways` のコード） | Kindle は `-webkit-` / `-epub-` 接頭辞付きのプロパティで縦書きを処理する。EPUBCheck は CSS の文法は確認するが、Kindle が対応しているかは確認しない。CSS を書き換えたら接頭辞付きのものも残す |
+| **ルビ** | ルビの括弧（`<rp>`）は EPUB 3.3 で非推奨のため出力していない。Kindle はルビに対応しているが、ルビ非対応のリーダーでは「薔薇ばら」のように親文字と続けて表示される。ルビの位置と、ルビが本文に混ざっていないかを確認する |
+| **画像の大きさ**（特に縦書き） | 縦書きの画像は `vw` / `vh` でページ内に収めている。端末によって単位の扱いが異なるため、タブレット・電話・E-reader のすべてで見切れていないか確認する |
+| **表のはみ出し** | Kindle は大きな表をタップで拡大表示する場合がある。小さな画面（電話）で読めるか確認する |
+| **「最初から読む」の位置** | nav の landmarks の `bodymatter` で指定（最初の章＝まえがき）。メニューの「最初に移動」で本文の先頭に飛ぶか確認する |
+| **表紙** | 販売ページと端末の本棚の表紙は、KDP で**別にアップロードした画像**が使われる。EPUB 内の表紙と同じ画像にする |
+| **フォントを埋め込んだ場合**（`fonts`） | 埋め込みフォントの使用許諾（電子書籍への埋め込み可か）は EPUBCheck では分からない。Kindle では読者がフォントを変えると埋め込みフォントは使われない |
+| **ダークモード・セピア** | 文字色・背景色を指定していないので通常は問題ないが、画像（透過 PNG の黒い線など）が背景に溶けないか確認する |
+
+> **補足**: EPUB 内の `META-INF/com.apple.ibooks.display-options.xml`（pandoc が出力する Apple Books 用の設定）や `toc.ncx`（EPUB2 互換の目次）は Kindle では無視されるか互換用に使われるだけで、害はありません。
+
 ## KDP へのアップロード手順
 
 事前に [KDP](https://kdp.amazon.co.jp/) のアカウントを作り、著者情報・支払い（銀行口座）・税務情報を登録しておきます。
@@ -532,7 +779,7 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
    - 出版に関して必要な権利: 自分が著作権を持っていれば「私は著作権を所有しており…」を選択
 3. **電子書籍のコンテンツ**
    - 原稿: 「電子書籍の原稿をアップロード」で `dist/*.epub` を選択。DRM の有無を選ぶ
-   - 表紙: 「表紙をアップロード」で表紙画像（`images/cover.jpg` と同じもの、1600×2560px の JPEG 推奨）を選択
+   - 表紙: 「表紙をアップロード」で表紙画像（`images/cover.jpg` と同じもの、1600×2560px の JPEG 推奨）を選択。[自動生成](#表紙の自動生成)した場合は `dist/<名前>-cover.jpg`
    - AI 生成コンテンツの有無を回答する
    - 「プレビューアーを起動」で表示を確認（縦書きの本が右綴じになっているか）
    - ISBN: **入力不要**（KDP が ASIN を割り当てる。ISBN を持っている場合のみ入力）
@@ -548,11 +795,16 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 
 `.github/workflows/build.yml` が、push・プルリクエストのたびに次を実行します。
 
-1. Pandoc（3.9 に固定）・EPUBCheck（5.3.0）・Python・Java をセットアップ
-2. `python3 scripts/build.py --all --check` で `books/` 以下の全ての本（縦書き版・横書き版）をビルドし、EPUBCheck で検証
-3. 生成した EPUB を **Artifacts**（`epub`）としてアップロード
+| ジョブ | 内容 | Artifacts |
+|:--|:--|:--|
+| `Build (book.yaml)` | `books/` 以下の全ての本を `book.yaml` の設定どおりにビルドし、EPUBCheck で検証 | `epub`（KDP にアップロードする EPUB）、`epubcheck-reports`（JSON レポート） |
+| `Validate (vertical)` | 全ての本を **縦書き** でビルドし、EPUBCheck で検証 | `epub-vertical` |
+| `Validate (horizontal)` | 全ての本を **横書き** でビルドし、EPUBCheck で検証 | `epub-horizontal` |
 
-ビルド結果は GitHub の「Actions」タブ → 該当の実行 → 「Artifacts」の `epub` からダウンロードできます。EPUBCheck でエラーがあるとジョブが失敗します。手動実行（workflow_dispatch）にも対応しています。
+- ツールのバージョンは `build.yml` の `env` で固定（Pandoc 3.9・EPUBCheck 5.3.0）。セットアップは `.github/actions/setup-tools` にまとめている
+- **エラーまたは警告が 1 件でもあるとジョブが失敗**します。各ジョブの「Summary」に EPUB ごとの件数の表が出ます
+- 縦書き・横書きの両方で検証するのは、片方のモードでしか使われない CSS（`vertical.css` / `horizontal.css`）やフィルタの処理も毎回検証するため。縦書きの本を横書きにしても、その逆でも、規格違反が出ないことを確認します
+- ビルド結果は GitHub の「Actions」タブ → 該当の実行 → 「Artifacts」からダウンロードできます。手動実行（workflow_dispatch）にも対応しています
 
 `.github/workflows/lint.yml` は、同じタイミングで [原稿のチェック](#原稿のチェック)（`npm run lint`）を実行します。
 
@@ -575,6 +827,8 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | 章ごとに XHTML ファイルを分割 | 章が新しいページから始まり、1 ファイルが大きくなりすぎない |
 | 見出しの ID を ASCII のみにする（`ascii_identifiers`） | 日本語を含む ID・リンクは変換ツールによって扱いが不安定なため |
 | `mimetype` を ZIP の先頭に無圧縮で格納 | EPUB（OCF）の要件 |
+| EPUBCheck は**警告も失敗**として扱い、CI で縦書き・横書きの両方を検証 | 警告を放置すると本物の問題が埋もれる。モードごとに使う CSS が違うため、片方だけの検証では見落としが出る |
+| ルビに `<rp>`（括弧）を出力しない | EPUB 3.3 で非推奨（EPUBCheck の HTM_055）。Kindle を含む EPUB3 リーダーはルビに対応している |
 
 ### メタデータ・表紙
 
@@ -583,6 +837,7 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | ISBN は任意。無い場合は `book.yaml` の固定 UUID を `dc:identifier` にする | KDP の電子書籍は ISBN 不要（ASIN が付与される）。EPUB には一意な識別子が必須で、ビルドごとに変わると別の本として扱われるため固定 |
 | 表紙は 1600×2560px（縦横比 1.6:1）の JPEG を推奨し、外れると警告 | KDP ヘルプの表紙の推奨値（理想 2560×1600px、JPEG または TIFF、RGB）。KDP では表紙を EPUB とは別にアップロードする |
 | 表紙画像は EPUB にも埋め込む（`cover-image`） | Kindle Previewer やほかのリーダーでも表紙が出るように。販売ページの表紙は KDP でアップロードしたものが使われる |
+| 扉ページの書名・副題・著者は `dc:title`（main / subtitle）と `dc:creator` だけから作る | pandoc の `author` / `subtitle` も併せて渡すと、扉に副題が 2 回・著者名が 2 回出るため |
 | タイトル・著者に読み（`file-as`）を持たせる | 日本語書名の並べ替えに使われる。KDP の入力欄のフリガナとは別物なので、KDP 側でも入力する |
 
 ### CSS
@@ -606,7 +861,7 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 
 ### 制作環境についての注記
 
-このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の判断は Kindle Publishing Guidelines と KDP ヘルプについての既知の内容をもとにしています。生成した EPUB は EPUBCheck（エラー・警告 0）と Chromium での縦書き・横書きの表示で確認していますが、Kindle Previewer での確認はしていません。出版前に、[Kindle Previewer での確認方法](#kindle-previewer-での確認方法)の項目を実機またはプレビューアーで確認してください。
+このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の判断は Kindle Publishing Guidelines と KDP ヘルプについての既知の内容をもとにしています。生成した EPUB は EPUBCheck 5.3.0（縦書き・横書きの両方でエラー・警告・USAGE とも 0）と Chromium での縦書き・横書きの表示で確認していますが、Kindle Previewer での確認はしていません。出版前に、[Kindle Previewer での確認方法](#kindle-previewer-での確認方法)の項目を実機またはプレビューアーで確認してください。
 
 ### 参考資料
 
@@ -630,7 +885,14 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | 縦書きでコードが切れる | `layout.vertical.code_blocks` を `sideways` に戻すか、コードを短く分割する |
 | 表がはみ出す | 列を減らすか表を分割する。縦書きでは `tables: sideways` を使う |
 | 表紙の警告が出る | 1600×2560px・RGB の JPEG にする |
+| `日本語フォントが見つかりません` | `sudo apt install fonts-noto-cjk`（Linux）、または `cover_design.font` にフォントファイルのパスを書く |
+| 表紙の文字が小さい・改行位置が不自然 | `cover_design.title` などに `\n` を入れて改行位置を指定するか、表記を短くする |
+| 画像の変更が EPUB に反映されない | `make clean` で `dist/.image-cache/` を消してビルドし直す |
+| `Pillow が無いため画像を最適化していません` | `pip install -r requirements.txt` |
 | EPUBCheck が見つからない | `bash scripts/setup.sh` を実行するか、`EPUBCHECK_JAR=/path/to/epubcheck.jar` を設定 |
+| `Java が見つかりません` | Java 11 以上をインストール（[EPUBCheck による検証](#epubcheck-による検証)） |
+| `EPUBCheck で warning 以上のメッセージが見つかりました` | 表示された場所（EPUB 内のファイル・行）を確認する。`dist/*.epub` は ZIP なので展開して該当の XHTML を見られる。原稿（Markdown）・`book.yaml`・`css` で追加した CSS のどれが原因かを特定して直す |
+| 原稿に書いた生の HTML でエラーになる | EPUB の XHTML は XML なので、`<br>` ではなく `<br />` のように閉じる。HTML5 で廃止された要素（`<center>`・`<font>` など）は使わない |
 | `textlint が見つかりません` | リポジトリのルートで `npm install` を実行 |
 | `npm run lint` で外部リンクが「接続できませんでした」 | 社内ネットワークなどで外に出られない。`npm run lint -- --no-external` で省略するか、`HTTPS_PROXY` を設定する（自動でプロキシを使う） |
 | `Error while loading rule 'prh': … spec failed` | 辞書の `specs` の結果が `to` と違う。`lint/dict/*.yml` のそのルールの `pattern` を見直す |
