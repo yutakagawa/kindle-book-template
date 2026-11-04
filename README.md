@@ -7,7 +7,8 @@ Markdown で書いた原稿から、**Kindle Direct Publishing（KDP）にその
 - 縦書きでも **コードブロック・表・英数字** が読みやすいように CSS を調整済み
 - 見出し／自動目次／シンタックスハイライト／表／図番号／囲み／脚注／ルビに対応
 - **ISBN なし**で出版できるメタデータ（固定 UUID）を `book.yaml` で管理
-- **GitHub Actions** で push のたびに縦書き版・横書き版の両方をビルドし、EPUBCheck で検証
+- **EPUBCheck** で検証し、エラーだけでなく**警告が 1 件でもあれば失敗**にする（`make check`）
+- **GitHub Actions** で push のたびに全ての本を縦書き版・横書き版の両方でビルドし、EPUBCheck で検証
 
 ```bash
 make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
@@ -20,15 +21,16 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 1. [ディレクトリ構成](#ディレクトリ構成)
 2. [セットアップ](#セットアップ)
 3. [ビルド方法](#ビルド方法)
-4. [新しい本を作る](#新しい本を作る)
-5. [設定ファイル book.yaml](#設定ファイル-bookyaml)
-6. [原稿の書き方](#原稿の書き方)
-7. [縦書きの表示の工夫](#縦書きの表示の工夫)
-8. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
-9. [KDP へのアップロード手順](#kdp-へのアップロード手順)
-10. [GitHub Actions](#github-actions)
-11. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
-12. [トラブルシューティング](#トラブルシューティング)
+4. [EPUBCheck による検証](#epubcheck-による検証)
+5. [新しい本を作る](#新しい本を作る)
+6. [設定ファイル book.yaml](#設定ファイル-bookyaml)
+7. [原稿の書き方](#原稿の書き方)
+8. [縦書きの表示の工夫](#縦書きの表示の工夫)
+9. [Kindle Previewer での確認方法](#kindle-previewer-での確認方法)
+10. [KDP へのアップロード手順](#kdp-へのアップロード手順)
+11. [GitHub Actions](#github-actions)
+12. [設計上の判断（KDP ガイドラインに基づいて決めたこと）](#設計上の判断kdp-ガイドラインに基づいて決めたこと)
+13. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -55,8 +57,11 @@ make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
 │   └── kindle.theme           #   シンタックスハイライトの配色（E-ink でも区別できる）
 ├── scripts/
 │   ├── build.py               # ビルドスクリプト（本体）
+│   ├── validate.py            # EPUBCheck による検証（警告以上で失敗）
 │   └── setup.sh               # ツールのインストール
-├── .github/workflows/build.yml
+├── .github/
+│   ├── workflows/build.yml    # CI（ビルド + 縦書き・横書きの両方で検証）
+│   └── actions/setup-tools/   # CI 用のツールのセットアップ
 ├── Makefile
 └── requirements.txt
 ```
@@ -82,13 +87,13 @@ bash scripts/setup.sh
 
 - pandoc が無ければインストール（macOS は Homebrew、Debian/Ubuntu は公式 .deb）
 - `pip install -r requirements.txt`（PyYAML・Pillow）
-- EPUBCheck を `tools/` にダウンロード（Java が必要）
+- EPUBCheck を `tools/` にダウンロードし、Java で起動できるか確認（Java 11 以上が無ければインストール方法を表示）
 
 ### Windows
 
 1. Pandoc をインストール: `winget install --id JohnMacFarlane.Pandoc`（または [公式インストーラ](https://pandoc.org/installing.html)）
 2. Python をインストールして `py -m pip install -r requirements.txt`
-3. （任意）EPUBCheck: [リリースページ](https://github.com/w3c/epubcheck/releases) から zip を取得し、展開した `epubcheck.jar` のパスを環境変数 `EPUBCHECK_JAR` に設定
+3. （任意）EPUBCheck: 下の「[EPUBCheck による検証](#epubcheck-による検証)」を参照
 
 `make` が無い場合は `py scripts\build.py --all` のように直接実行してください（WSL を使うと macOS / Linux と同じ手順でビルドできます）。
 
@@ -96,7 +101,9 @@ bash scripts/setup.sh
 
 ```bash
 make                 # books/ 以下の全ての本をビルド → dist/*.epub
-make check           # ビルド後に EPUBCheck で検証
+make check           # ビルド後に EPUBCheck で検証（警告が 1 件でもあれば失敗）
+make check-modes     # 全ての本を縦書き・横書きの両方でビルドして検証（CI と同じ）
+make validate        # ビルド済みの dist/*.epub を検証するだけ
 make vertical        # 縦書きサンプルだけ
 make horizontal      # 横書きサンプルだけ
 make book BOOK=books/my-book
@@ -114,10 +121,67 @@ python3 scripts/build.py books/my-book -v         # 実行した pandoc のコ�
 | オプション | 意味 |
 |:--|:--|
 | `--all` | `books/*/book.yaml` がある全ての本をビルド |
-| `--check` | ビルド後に EPUBCheck を実行（`tools/epubcheck*/epubcheck.jar` → `EPUBCHECK_JAR` → `epubcheck` コマンドの順に探す） |
+| `--check` | ビルド後に EPUBCheck で検証（[詳細](#epubcheck-による検証)） |
+| `--fail-on LEVEL` | `--check` で失敗にする重大度。`fatal` / `error` / `warning`（既定）/ `info` / `usage` |
+| `--report-dir DIR` | `--check` の結果を JSON レポートとして保存 |
 | `--writing-mode vertical\|horizontal` | `layout.writing_mode` を一時的に上書き |
 | `-o DIR` | 出力先（既定 `dist/`） |
 | `--pandoc PATH` | 使う pandoc（環境変数 `PANDOC` でも可） |
+
+## EPUBCheck による検証
+
+[EPUBCheck](https://www.w3.org/publishing/epubcheck/) は W3C 公式の EPUB 検証ツールです。KDP は EPUBCheck の結果をそのまま使うわけではありませんが、規格違反があると変換で内容が欠けたり、アップロード時にエラーになったりする原因になるため、**エラーと警告がともに 0 件**の状態を保ちます。
+
+### 必要なツール
+
+| ツール | 入れ方 |
+|:--|:--|
+| Java 11 以上 | macOS: `brew install openjdk@21` / Debian・Ubuntu: `sudo apt-get install -y openjdk-21-jre-headless` / Windows: `winget install EclipseAdoptium.Temurin.21.JRE` |
+| EPUBCheck 5.3.0 | `bash scripts/setup.sh` で `tools/epubcheck-5.3.0/` に展開される（CI と同じバージョン）。macOS は `brew install epubcheck` でも可 |
+
+手動で入れる場合は [リリースページ](https://github.com/w3c/epubcheck/releases) から `epubcheck-5.3.0.zip` を取得して展開し、`epubcheck.jar` の場所を次のどれかで指定します。
+
+- `tools/` の下に展開する（`tools/epubcheck-5.3.0/epubcheck.jar`）
+- 環境変数 `EPUBCHECK_JAR=/path/to/epubcheck.jar`（Windows: `set EPUBCHECK_JAR=C:\path\to\epubcheck.jar`）
+- `--epubcheck-jar /path/to/epubcheck.jar` オプション
+
+検索順は `--epubcheck-jar` → `EPUBCHECK_JAR` → `tools/epubcheck-*/epubcheck.jar`（新しい版を優先）→ `PATH` 上の `epubcheck` コマンドです。インストールできたかは `java -jar tools/epubcheck-5.3.0/epubcheck.jar --version` で確認できます。
+
+### 実行方法
+
+```bash
+make check                                   # 全ての本をビルドして検証
+make check-modes                             # 全ての本を縦書き・横書きの両方でビルドして検証（CI と同じ）
+make validate                                # dist/*.epub を検証するだけ
+make validate EPUB=dist/my-book.epub         # 特定の EPUB を検証
+python3 scripts/validate.py dist/*.epub --report-dir dist/reports   # JSON レポートも保存
+```
+
+出力例:
+
+```text
+[epubcheck] 検証: dist/vertical-sample.epub
+[epubcheck]   EPUBCheck 5.3.0・EPUB 3.3: 0 fatal / 0 error / 0 warning / 0 info / 0 usage
+[epubcheck]   ✓ 問題ありません
+```
+
+問題があると、次のように場所（EPUB 内のファイル・行・列）とメッセージが表示され、終了コード 1 で終わります。
+
+```text
+  ERROR(RSC-007): my-book.epub/EPUB/nav.xhtml(14,120): Referenced resource "EPUB/text/missing.xhtml" could not be found in the EPUB.
+```
+
+### 失敗にする基準
+
+EPUBCheck 本体は警告があっても終了コード 0 を返すため、`scripts/validate.py` が JSON レポート（`--json`）を読んで判定します。
+
+| 重大度 | 意味 | 既定の扱い |
+|:--|:--|:--|
+| FATAL / ERROR | 規格違反。リーダーや KDP で正しく処理されない可能性が高い | **失敗** |
+| WARNING | 規格上は許されるが問題になりやすい書き方 | **失敗** |
+| INFO / USAGE | 参考情報・非推奨の書き方（EPUBCheck の `-u` で表示） | 表示のみ |
+
+基準は `make check FAIL_ON=usage`（もっとも厳しい）や `--fail-on error`（警告を許す）で変えられます。このテンプレートのサンプルは USAGE まで含めて 0 件です。
 
 ## 新しい本を作る
 
@@ -373,6 +437,26 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 
 問題が無ければ、KDP には **EPUB をそのままアップロード** します。
 
+### EPUBCheck を通っても Kindle Previewer で確認が必要な点
+
+EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで、Kindle 形式（KF8 / KFX）に変換したときの見え方は調べません。次の点は EPUBCheck が 0 件でも Kindle Previewer で確認してください。
+
+| 確認すること | 理由・対処 |
+|:--|:--|
+| **変換時の警告**（Kindle Previewer で本を開いたときのメッセージ、メニューの変換ログ） | Kindle 独自の変換で出る警告は EPUBCheck とは別物。警告が出たら内容を確認する |
+| **Enhanced Typesetting が有効になっているか** | 縦書き・ルビ・縦中横などの日本語組版は Enhanced Typesetting で処理される。無効になっていたら、変換ログの原因（未対応の CSS など）を直す |
+| **綴じ方向とページ送り**（縦書きは右綴じ） | `page-progression-direction` と Kindle 独自の `primary-writing-mode` メタデータで指定している。後者は EPUB の規格外のため EPUBCheck は確認しない |
+| **縦書き用 CSS が効いているか**（縦中横・英字の向き・`sideways` のコード） | Kindle は `-webkit-` / `-epub-` 接頭辞付きのプロパティで縦書きを処理する。EPUBCheck は CSS の文法は確認するが、Kindle が対応しているかは確認しない。CSS を書き換えたら接頭辞付きのものも残す |
+| **ルビ** | ルビの括弧（`<rp>`）は EPUB 3.3 で非推奨のため出力していない。Kindle はルビに対応しているが、ルビ非対応のリーダーでは「薔薇ばら」のように親文字と続けて表示される。ルビの位置と、ルビが本文に混ざっていないかを確認する |
+| **画像の大きさ**（特に縦書き） | 縦書きの画像は `vw` / `vh` でページ内に収めている。端末によって単位の扱いが異なるため、タブレット・電話・E-reader のすべてで見切れていないか確認する |
+| **表のはみ出し** | Kindle は大きな表をタップで拡大表示する場合がある。小さな画面（電話）で読めるか確認する |
+| **「最初から読む」の位置** | nav の landmarks の `bodymatter` で指定（最初の章＝まえがき）。メニューの「最初に移動」で本文の先頭に飛ぶか確認する |
+| **表紙** | 販売ページと端末の本棚の表紙は、KDP で**別にアップロードした画像**が使われる。EPUB 内の表紙と同じ画像にする |
+| **フォントを埋め込んだ場合**（`fonts`） | 埋め込みフォントの使用許諾（電子書籍への埋め込み可か）は EPUBCheck では分からない。Kindle では読者がフォントを変えると埋め込みフォントは使われない |
+| **ダークモード・セピア** | 文字色・背景色を指定していないので通常は問題ないが、画像（透過 PNG の黒い線など）が背景に溶けないか確認する |
+
+> **補足**: EPUB 内の `META-INF/com.apple.ibooks.display-options.xml`（pandoc が出力する Apple Books 用の設定）や `toc.ncx`（EPUB2 互換の目次）は Kindle では無視されるか互換用に使われるだけで、害はありません。
+
 ## KDP へのアップロード手順
 
 事前に [KDP](https://kdp.amazon.co.jp/) のアカウントを作り、著者情報・支払い（銀行口座）・税務情報を登録しておきます。
@@ -402,11 +486,16 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 
 `.github/workflows/build.yml` が、push・プルリクエストのたびに次を実行します。
 
-1. Pandoc（3.9 に固定）・EPUBCheck（5.3.0）・Python・Java をセットアップ
-2. `python3 scripts/build.py --all --check` で `books/` 以下の全ての本（縦書き版・横書き版）をビルドし、EPUBCheck で検証
-3. 生成した EPUB を **Artifacts**（`epub`）としてアップロード
+| ジョブ | 内容 | Artifacts |
+|:--|:--|:--|
+| `Build (book.yaml)` | `books/` 以下の全ての本を `book.yaml` の設定どおりにビルドし、EPUBCheck で検証 | `epub`（KDP にアップロードする EPUB）、`epubcheck-reports`（JSON レポート） |
+| `Validate (vertical)` | 全ての本を **縦書き** でビルドし、EPUBCheck で検証 | `epub-vertical` |
+| `Validate (horizontal)` | 全ての本を **横書き** でビルドし、EPUBCheck で検証 | `epub-horizontal` |
 
-ビルド結果は GitHub の「Actions」タブ → 該当の実行 → 「Artifacts」の `epub` からダウンロードできます。EPUBCheck でエラーがあるとジョブが失敗します。手動実行（workflow_dispatch）にも対応しています。
+- ツールのバージョンは `build.yml` の `env` で固定（Pandoc 3.9・EPUBCheck 5.3.0）。セットアップは `.github/actions/setup-tools` にまとめている
+- **エラーまたは警告が 1 件でもあるとジョブが失敗**します。各ジョブの「Summary」に EPUB ごとの件数の表が出ます
+- 縦書き・横書きの両方で検証するのは、片方のモードでしか使われない CSS（`vertical.css` / `horizontal.css`）やフィルタの処理も毎回検証するため。縦書きの本を横書きにしても、その逆でも、規格違反が出ないことを確認します
+- ビルド結果は GitHub の「Actions」タブ → 該当の実行 → 「Artifacts」からダウンロードできます。手動実行（workflow_dispatch）にも対応しています
 
 ## 設計上の判断（KDP ガイドラインに基づいて決めたこと）
 
@@ -423,6 +512,8 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | 章ごとに XHTML ファイルを分割 | 章が新しいページから始まり、1 ファイルが大きくなりすぎない |
 | 見出しの ID を ASCII のみにする（`ascii_identifiers`） | 日本語を含む ID・リンクは変換ツールによって扱いが不安定なため |
 | `mimetype` を ZIP の先頭に無圧縮で格納 | EPUB（OCF）の要件 |
+| EPUBCheck は**警告も失敗**として扱い、CI で縦書き・横書きの両方を検証 | 警告を放置すると本物の問題が埋もれる。モードごとに使う CSS が違うため、片方だけの検証では見落としが出る |
+| ルビに `<rp>`（括弧）を出力しない | EPUB 3.3 で非推奨（EPUBCheck の HTM_055）。Kindle を含む EPUB3 リーダーはルビに対応している |
 
 ### メタデータ・表紙
 
@@ -431,6 +522,7 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | ISBN は任意。無い場合は `book.yaml` の固定 UUID を `dc:identifier` にする | KDP の電子書籍は ISBN 不要（ASIN が付与される）。EPUB には一意な識別子が必須で、ビルドごとに変わると別の本として扱われるため固定 |
 | 表紙は 1600×2560px（縦横比 1.6:1）の JPEG を推奨し、外れると警告 | KDP ヘルプの表紙の推奨値（理想 2560×1600px、JPEG または TIFF、RGB）。KDP では表紙を EPUB とは別にアップロードする |
 | 表紙画像は EPUB にも埋め込む（`cover-image`） | Kindle Previewer やほかのリーダーでも表紙が出るように。販売ページの表紙は KDP でアップロードしたものが使われる |
+| 扉ページの書名・副題・著者は `dc:title`（main / subtitle）と `dc:creator` だけから作る | pandoc の `author` / `subtitle` も併せて渡すと、扉に副題が 2 回・著者名が 2 回出るため |
 | タイトル・著者に読み（`file-as`）を持たせる | 日本語書名の並べ替えに使われる。KDP の入力欄のフリガナとは別物なので、KDP 側でも入力する |
 
 ### CSS
@@ -454,7 +546,7 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 
 ### 制作環境についての注記
 
-このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の判断は Kindle Publishing Guidelines と KDP ヘルプについての既知の内容をもとにしています。生成した EPUB は EPUBCheck（エラー・警告 0）と Chromium での縦書き・横書きの表示で確認していますが、Kindle Previewer での確認はしていません。出版前に、[Kindle Previewer での確認方法](#kindle-previewer-での確認方法)の項目を実機またはプレビューアーで確認してください。
+このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の判断は Kindle Publishing Guidelines と KDP ヘルプについての既知の内容をもとにしています。生成した EPUB は EPUBCheck 5.3.0（縦書き・横書きの両方でエラー・警告・USAGE とも 0）と Chromium での縦書き・横書きの表示で確認していますが、Kindle Previewer での確認はしていません。出版前に、[Kindle Previewer での確認方法](#kindle-previewer-での確認方法)の項目を実機またはプレビューアーで確認してください。
 
 ### 参考資料
 
@@ -479,3 +571,6 @@ KDP にアップロードする前に、[Kindle Previewer 3](https://kdp.amazon.
 | 表がはみ出す | 列を減らすか表を分割する。縦書きでは `tables: sideways` を使う |
 | 表紙の警告が出る | 1600×2560px・RGB の JPEG にする |
 | EPUBCheck が見つからない | `bash scripts/setup.sh` を実行するか、`EPUBCHECK_JAR=/path/to/epubcheck.jar` を設定 |
+| `Java が見つかりません` | Java 11 以上をインストール（[EPUBCheck による検証](#epubcheck-による検証)） |
+| `EPUBCheck で warning 以上のメッセージが見つかりました` | 表示された場所（EPUB 内のファイル・行）を確認する。`dist/*.epub` は ZIP なので展開して該当の XHTML を見られる。原稿（Markdown）・`book.yaml`・`css` で追加した CSS のどれが原因かを特定して直す |
+| 原稿に書いた生の HTML でエラーになる | EPUB の XHTML は XML なので、`<br>` ではなく `<br />` のように閉じる。HTML5 で廃止された要素（`<center>`・`<font>` など）は使わない |

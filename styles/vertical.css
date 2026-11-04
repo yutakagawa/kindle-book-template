@@ -138,5 +138,7 @@ section.footnotes hr { margin: 0 1.5em 0 1em; }
 nav#toc ol ol, nav[epub|type~="toc"] ol ol { padding-left: 0; padding-top: 1.5em; }
 
 /* ---------- 扉 ---------- */
-.titlepage h1.title, h1.title { margin: 0 3em 0 0.5em; }
-.author { margin: 0 2em 0 0; }
+.titlepage h1.main, h1.title { margin: 0 3em 0 0.5em; }
+.titlepage h1.subtitle, .subtitle { margin: 0 0 0 0.5em; }
+.titlepage p.aut, .author { margin: 0 2em 0 0; }
+.titlepage p.publisher { margin: 0 3em 0 0; }

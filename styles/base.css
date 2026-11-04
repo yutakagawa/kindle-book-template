@@ -179,9 +179,18 @@ nav#landmarks, nav[epub|type~="landmarks"] { display: none; }
 section#title-block-header, .titlepage {
   text-align: center;
 }
-.titlepage h1.title, h1.title { font-size: 1.8em; margin: 3em 0 0.5em 0; }
-.subtitle { font-size: 1.2em; }
-.author { margin-top: 2em; }
+/*
+ * pandoc の扉は次の構造で出力される（build.py が title の type と creator の role を設定する）:
+ *   h1.main（書名） / h1.subtitle（副題） / p.aut（著者。ほかに p.ill, p.edt など役割コード名）
+ *   / p.publisher / p.date / div.rights
+ */
+.titlepage h1 { margin: 0; page-break-after: auto; break-after: auto; }
+.titlepage h1.main, h1.title { font-size: 1.8em; margin: 3em 0 0.5em 0; }
+.titlepage h1.subtitle, .subtitle { font-size: 1.2em; font-weight: normal; margin: 0 0 0.5em 0; }
+.titlepage p { text-indent: 0; }
+.titlepage p.aut, .author { margin-top: 2em; }
+.titlepage p.publisher { margin-top: 3em; }
+.titlepage p.date, .titlepage .rights { font-size: 0.85em; }
 
 /* ---------- 汎用クラス ---------- */
 .center { text-align: center; text-indent: 0; }
