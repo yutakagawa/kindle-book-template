@@ -1,0 +1,54 @@
+name: Set up build tools
+description: Python・Pandoc・Java・EPUBCheck をインストールする（バージョンは入力で指定）
+
+inputs:
+  pandoc-version:
+    description: Pandoc のバージョン
+    required: true
+  epubcheck-version:
+    description: EPUBCheck のバージョン
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+        cache: pip
+
+    - uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: "21"
+
+    - name: Install Python packages
+      shell: bash
+      run: pip install -r requirements.txt
+
+    - name: Install Pandoc
+      shell: bash
+      run: |
+        curl -fsSL -o "$RUNNER_TEMP/pandoc.deb" \
+          "https://github.com/jgm/pandoc/releases/download/${{ inputs.pandoc-version }}/pandoc-${{ inputs.pandoc-version }}-1-amd64.deb"
+        sudo dpkg -i "$RUNNER_TEMP/pandoc.deb"
+        pandoc --version | head -1
+
+    - name: Cache EPUBCheck
+      id: cache-epubcheck
+      uses: actions/cache@v5
+      with:
+        path: tools/epubcheck-${{ inputs.epubcheck-version }}
+        key: epubcheck-${{ inputs.epubcheck-version }}
+
+    - name: Install EPUBCheck
+      if: steps.cache-epubcheck.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        curl -fsSL -o "$RUNNER_TEMP/epubcheck.zip" \
+          "https://github.com/w3c/epubcheck/releases/download/v${{ inputs.epubcheck-version }}/epubcheck-${{ inputs.epubcheck-version }}.zip"
+        mkdir -p tools && unzip -q -o "$RUNNER_TEMP/epubcheck.zip" -d tools
+
+    - name: Show EPUBCheck version
+      shell: bash
+      run: java -jar "tools/epubcheck-${{ inputs.epubcheck-version }}/epubcheck.jar" --version

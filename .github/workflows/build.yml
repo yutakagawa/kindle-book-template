@@ -10,43 +10,64 @@ env:
   EPUBCHECK_VERSION: "5.3.0"
 
 jobs:
+  # book.yaml の設定どおりにビルドし、KDP にアップロードする EPUB を Artifacts に置く
   build:
+    name: Build (book.yaml)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-tools
         with:
-          python-version: "3.12"
+          pandoc-version: ${{ env.PANDOC_VERSION }}
+          epubcheck-version: ${{ env.EPUBCHECK_VERSION }}
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Install Python packages
-        run: pip install -r requirements.txt
-
-      - name: Install Pandoc
-        run: |
-          curl -fsSL -o /tmp/pandoc.deb \
-            "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb"
-          sudo dpkg -i /tmp/pandoc.deb
-          pandoc --version | head -1
-
-      - name: Install EPUBCheck
-        run: |
-          curl -fsSL -o /tmp/epubcheck.zip \
-            "https://github.com/w3c/epubcheck/releases/download/v${EPUBCHECK_VERSION}/epubcheck-${EPUBCHECK_VERSION}.zip"
-          mkdir -p tools && unzip -q /tmp/epubcheck.zip -d tools
-
-      # books/ 以下の全ての本（縦書き・横書きの両サンプル）をビルドし、EPUBCheck で検証する
+      # 警告が 1 件でもあれば失敗する（scripts/validate.py が EPUBCheck の JSON レポートを判定）
       - name: Build and validate EPUBs
-        run: python3 scripts/build.py --all --check
+        run: python3 scripts/build.py --all --check --fail-on warning --report-dir dist/reports
 
       - name: Upload EPUBs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: epub
           path: dist/*.epub
           if-no-files-found: error
+
+      - name: Upload EPUBCheck reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: epubcheck-reports
+          path: dist/reports/
+          if-no-files-found: ignore
+
+  # books/ 以下の全ての本を「縦書き」「横書き」の両方でビルドして検証する。
+  # 片方のモードでしか使われない CSS・フィルタの処理も毎回 EPUBCheck を通す
+  validate:
+    name: Validate (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [vertical, horizontal]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-tools
+        with:
+          pandoc-version: ${{ env.PANDOC_VERSION }}
+          epubcheck-version: ${{ env.EPUBCHECK_VERSION }}
+
+      - name: Build and validate (${{ matrix.mode }})
+        run: >-
+          python3 scripts/build.py --all
+          --writing-mode ${{ matrix.mode }}
+          -o dist/modes
+          --check --fail-on warning
+          --report-dir dist/modes/reports
+
+      - name: Upload EPUBs and reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: epub-${{ matrix.mode }}
+          path: dist/modes/
+          if-no-files-found: ignore

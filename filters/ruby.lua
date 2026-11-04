@@ -31,6 +31,10 @@ local function split(s, sep)
   return t
 end
 
+-- <rp>（括弧のフォールバック）は出力しない。
+--   EPUB 3.3 では rp は非推奨（EPUBCheck が HTM_055 を報告する）で、
+--   Kindle を含む EPUB3 リーダーはルビに対応しているため不要。
+--   （ルビ非対応のリーダーでは「漢字かんじ」のように続けて表示される）
 local function make_ruby(base, reading)
   local readings = split(reading, "|")
   local html = { "<ruby>" }
@@ -38,10 +42,10 @@ local function make_ruby(base, reading)
   if #readings > 1 and #readings == #chars then
     -- モノルビ
     for i, ch in ipairs(chars) do
-      html[#html + 1] = esc(ch) .. "<rp>（</rp><rt>" .. esc(readings[i]) .. "</rt><rp>）</rp>"
+      html[#html + 1] = esc(ch) .. "<rt>" .. esc(readings[i]) .. "</rt>"
     end
   else
-    html[#html + 1] = esc(base) .. "<rp>（</rp><rt>" .. esc(table.concat(readings, "")) .. "</rt><rp>）</rp>"
+    html[#html + 1] = esc(base) .. "<rt>" .. esc(table.concat(readings, "")) .. "</rt>"
   end
   html[#html + 1] = "</ruby>"
   return pandoc.RawInline("html", table.concat(html))
