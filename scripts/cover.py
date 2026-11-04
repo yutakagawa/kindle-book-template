@@ -26,10 +26,16 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+if __name__ == "__main__":
+    # bash scripts/setup.sh が作った .venv があれば、その Python（PyYAML・Pillow 入り）で起動し直す
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from use_venv import reexec_in_venv
+    reexec_in_venv(__file__)
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
-    sys.exit("PyYAML が必要です: pip install -r requirements.txt")
+    sys.exit("PyYAML が必要です: bash scripts/setup.sh を実行してください（.venv に入ります）")
 
 ROOT = Path(__file__).resolve().parent.parent
 

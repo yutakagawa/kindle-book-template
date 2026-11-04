@@ -1,5 +1,6 @@
 # よく使うコマンドのまとめ（make が無い環境では python3 scripts/build.py を直接使う）
-PYTHON   ?= python3
+# bash scripts/setup.sh が作る .venv（Python の仮想環境）があれば、その Python を使う
+PYTHON   ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 BUILD    := $(PYTHON) scripts/build.py
 VALIDATE := $(PYTHON) scripts/validate.py
 # EPUBCheck で失敗にする重大度: fatal / error / warning（既定）/ info / usage

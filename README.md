@@ -74,8 +74,10 @@ make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample
 │   ├── validate.py            # EPUBCheck による検証（警告以上で失敗）
 │   ├── new-book.py            # 新しい本の雛形を対話形式で作る
 │   ├── check-manuscript.mjs   # 原稿のチェック（npm run lint）
+│   ├── node-env.mjs           # Node.js のバージョンの確認（check-manuscript.mjs から使う）
+│   ├── use_venv.py            # .venv があればその Python で起動し直す
 │   └── setup.sh               # ツールのインストール
-├── tests/                     # scripts/ の自動テスト（pytest と node --test）
+├── tests/                     # scripts/ の自動テスト（make test。[テスト](#テスト)参照）
 ├── templates/paperback.html   # ペーパーバック用 HTML のテンプレート（扉・目次・本文・奥付）
 ├── lint/                      # 原稿のチェックの設定
 │   ├── dict/technical.yml     #   技術書向けの表記ルール（辞書）
@@ -89,6 +91,7 @@ make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample
 │   └── actions/setup-tools/   # CI 用のツールのセットアップ
 ├── .textlintrc.json           # textlint のルール設定
 ├── package.json               # チェック用ツール・Vivliostyle（Node.js）
+├── .nvmrc                     # 使う Node.js のバージョン（CI も同じ）
 ├── Makefile
 └── requirements.txt
 ```
@@ -104,8 +107,8 @@ make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample
 | [Pillow](https://python-pillow.org/)（推奨） | 画像の最適化・表紙の確認 | Python 製で追加のネイティブツール（ImageMagick など）が要らない。無い場合は最適化をスキップして元画像を使う |
 | [EPUBCheck](https://www.w3.org/publishing/epubcheck/)（任意・Java 11 以上） | EPUB の規格チェック | W3C 公式の検証ツール。KDP でのエラーを事前に減らせる |
 | [Kindle Previewer 3](https://kdp.amazon.co.jp/ja_JP/help/topic/G202131170)（任意） | Kindle での見え方の確認 | Amazon 公式。KDP と同じ変換エンジンで表示できる |
-| [Vivliostyle CLI](https://vivliostyle.org/)（任意・Node.js 20 以上） | ペーパーバックの本文 PDF の組版 | CSS 組版（CSS Paged Media）で縦書き・右綴じ・ノンブル・柱・目次のページ参照に対応し、日本語の組版の実績がある。Pandoc の HTML 出力をそのまま使えるので、EPUB と同じ原稿・フィルタ・CSS を共有できる（LaTeX のように別の組版系を保守しなくてよい） |
-| [Node.js](https://nodejs.org/) 20 以上 + [textlint](https://textlint.org/)（任意） | 原稿のチェック | 日本語の表記ゆれ・技術文書向けのルールが最も充実している校正ツール（[詳細](#チェックの内容とツール)） |
+| [Vivliostyle CLI](https://vivliostyle.org/)（任意・Node.js 22.12 以上） | ペーパーバックの本文 PDF の組版 | CSS 組版（CSS Paged Media）で縦書き・右綴じ・ノンブル・柱・目次のページ参照に対応し、日本語の組版の実績がある。Pandoc の HTML 出力をそのまま使えるので、EPUB と同じ原稿・フィルタ・CSS を共有できる（LaTeX のように別の組版系を保守しなくてよい） |
+| [Node.js](https://nodejs.org/) 22.12 以上（推奨 24 LTS）+ [textlint](https://textlint.org/)（任意） | 原稿のチェック | 日本語の表記ゆれ・技術文書向けのルールが最も充実している校正ツール（[詳細](#チェックの内容とツール)） |
 
 ### macOS / Linux / WSL
 
@@ -115,11 +118,23 @@ bash scripts/setup.sh
 
 `setup.sh` は次を行います。
 
-- pandoc が無ければインストール（macOS は Homebrew、Debian/Ubuntu は公式 .deb）
-- `pip install -r requirements.txt`（PyYAML・Pillow）
+- pandoc が無いか、3.1 より古ければインストール（macOS は Homebrew、Debian/Ubuntu は公式 .deb。Ubuntu 22.04 の apt の pandoc 2.9 は古すぎるため入れ直す）
+- リポジトリ直下に Python の仮想環境 `.venv` を作り、`requirements.txt`（PyYAML・Pillow）をその中に入れる
 - EPUBCheck を `tools/` にダウンロードし、Java で起動できるか確認（Java 11 以上が無ければインストール方法を表示）
+- Node.js 22.12 以上があれば `npm install`（textlint・Vivliostyle）
 
-原稿のチェックを使う場合は、Node.js 20 以上を入れてから、リポジトリのルートで `npm install` を実行します。
+途中の手順が失敗しても残りの手順は続け、最後に完了しなかった手順をまとめて表示します（終了コード 1）。
+
+原稿のチェックとペーパーバックの PDF には Node.js 22.12 以上（推奨 24 LTS）が必要です。[nvm](https://github.com/nvm-sh/nvm) を使う場合は、リポジトリのルートで `nvm install` を実行すると `.nvmrc` のバージョン（CI と同じ）が入ります。Node.js を入れたあとで `npm install` を実行してください。
+
+#### Python の仮想環境（.venv）
+
+Ubuntu 23.04 以降（WSL の既定の Ubuntu 24.04 を含む）・Debian 12・Homebrew の Python では、システムの Python に `pip install` すると `error: externally-managed-environment`（PEP 668）で拒否されます。そのため `setup.sh` は、このリポジトリ専用の仮想環境 `.venv` にパッケージを入れます。
+
+- `make` は `.venv/bin/python` があれば自動でそれを使います（`make PYTHON=python3` で変更可）
+- `python3 scripts/build.py` のように直接実行しても、`.venv` があればその Python で起動し直します（`KBT_NO_VENV=1` で無効）
+- Debian / Ubuntu で `.venv` を作れないときは `sudo apt-get install -y python3-venv` を実行してから、もう一度 `bash scripts/setup.sh` を実行します
+- パッケージを手動で入れ直すときは `.venv/bin/python -m pip install -r requirements.txt`
 
 ### Windows
 
@@ -302,10 +317,41 @@ layout:
 | `layout.highlight_style` | – | ハイライト配色。pandoc の `.theme` ファイルか `tango` などの名前 |
 | `layout.vertical.code_blocks` / `tables` | – | 縦書き時のコード・表の表示方式（[後述](#縦書きの表示の工夫)） |
 | `layout.vertical.tcy_digits` | – | 何桁までの数字を縦中横にするか（既定 2） |
+| `layout.cover_page` | – | HTML の表紙ページ（`cover.xhtml`）を EPUB の本文に入れるか（既定 `false`）。Kindle では表紙が 2 回出る原因になるため入れない。Apple Books などで表紙ページが必要なときだけ `true`（[設計上の判断](#メタデータ表紙)） |
+| `accessibility.*` | – | アクセシビリティのメタデータ（[後述](#アクセシビリティのメタデータ)） |
 | `images.*` | – | 画像の最適化の設定（[後述](#画像の最適化)） |
 | `css` | – | 追加の CSS ファイル（本のディレクトリからの相対パス） |
 | `fonts` | – | 埋め込むフォント（通常は不要。[設計上の判断](#設計上の判断kdp-ガイドラインに基づいて決めたこと)参照） |
 | `output` | – | 出力ファイル名（既定 `<ディレクトリ名>.epub`） |
+
+### アクセシビリティのメタデータ
+
+欧州アクセシビリティ法（EAA、2025 年 6 月 28 日施行）により、EU の読者に販売する電子書籍には、アクセシビリティの情報（[EPUB Accessibility 1.1](https://www.w3.org/TR/epub-a11y-11/) のメタデータ）を付けることが求められています。KDP の出版地域の既定は「すべての地域」なので、日本語の本も EU のストアで販売されます。
+
+ビルド時に、EPUB の中身から次のメタデータを自動で OPF に入れます。
+
+| メタデータ | 既定値 |
+|:--|:--|
+| `schema:accessMode` | `textual`。本文に画像があれば `visual` も（表紙は数えない） |
+| `schema:accessModeSufficient` | `textual`。代替テキストの無い画像があれば `textual,visual` |
+| `schema:accessibilityFeature` | `structuralNavigation`・`tableOfContents`・`readingOrder`。すべての画像に代替テキストがあれば `alternativeText`、ルビがあれば `rubyAnnotations` |
+| `schema:accessibilityHazard` | `none` |
+| `schema:accessibilitySummary` | 目次・見出しによるナビゲーションと、代替テキストの有無を説明する文 |
+
+代替テキストは `![図の説明](images/x.png)` の「図の説明」です。`![](images/x.png)` のように空にすると、ビルドと `npm run lint` で警告が出ます。
+
+規格への適合（`dcterms:conformsTo`）は**自動では宣言しません**。[Ace by DAISY](https://daisy.github.io/ace/) などで確認したうえで、`book.yaml` に書いてください。書いた項目は既定値を置き換えます（値は文字列か、文字列のリスト）。
+
+```yaml
+accessibility:
+  summary: 目次・見出しから各章に移動できます。すべての図に説明を付けています。
+  hazards: [noFlashingHazard, noMotionSimulationHazard, noSoundHazard]
+  conforms_to: EPUB Accessibility 1.1 - WCAG 2.2 Level AA   # 確認した場合だけ
+  certified_by: サンプル出版                                  # 確認した人・組織
+  # access_modes / access_mode_sufficient / features も指定できる
+```
+
+KDP がどのメタデータを使うかは公開情報が少ないため、出版前に KDP ヘルプで最新の内容を確認してください（要確認）。
 
 ## 表紙の自動生成
 
@@ -408,7 +454,7 @@ KDP ではタイトル・著者名が書誌情報と一致していることが�
 
 ### 準備
 
-組版には [Vivliostyle CLI](https://vivliostyle.org/)（Node.js 製。縦書きの組版・ページ番号・目次のページ参照に対応）を使います。Node.js 20 以上を入れてから、リポジトリの直下で次を実行します（`bash scripts/setup.sh` でも入ります）。
+組版には [Vivliostyle CLI](https://vivliostyle.org/)（Node.js 製。縦書きの組版・ページ番号・目次のページ参照に対応）を使います。Node.js 22.12 以上（推奨 24 LTS）を入れてから、リポジトリの直下で次を実行します（`bash scripts/setup.sh` でも入ります）。
 
 ```bash
 npm install
@@ -655,9 +701,11 @@ const res = await fetch(url);
 | GIF | PNG に変換。アニメーション GIF は 1 フレーム目だけ | Kindle はアニメーション GIF に非対応 |
 | CMYK・16 ビット | 8 ビットの RGB（グレースケール画像はグレースケールのまま） | 端末は RGB で表示する。CMYK は色が大きく変わることがある |
 | EXIF の回転情報 | 回転を反映してからメタデータを削除 | 端末によっては回転情報が無視され、横倒しで表示されるため |
+| EXIF・XMP・IPTC・コメント（すべての JPEG・PNG） | 削除する（画素は変えない。色の情報の ICC プロファイルは残す） | スマートフォンの写真には撮影場所（GPS 位置情報）や機種名が入っていて、そのまま読者に配布されてしまうため |
 | 5MB を超える画像 | JPEG は画質を段階的に下げる。PNG は JPEG に切り替える | 1 枚が大きすぎると変換・配信で問題になる（目安として 5MB を上限にしている） |
 | PNG（変更不要なもの） | 可逆圧縮で再圧縮し、小さくなったときだけ採用 | 画質を変えずにファイルを小さくする |
-| JPEG（変更不要なもの） | そのまま使う | 再圧縮すると画質が落ちるため |
+| JPEG（変更不要なもの） | 再圧縮せず、メタデータだけを削除 | 再圧縮すると画質が落ちるため |
+| 形式を変えた画像のファイル名 | 元の拡張子を残す（`diagram.tiff` → `diagram.tiff.png`） | `diagram.png` と `diagram.tiff` が両方あっても、別々の画像のまま EPUB に入るように。最適化後の名前が重なるときはエラーで止める |
 | 表紙（`cover`） | 1600×2560px 以内の JPEG にする | KDP の表紙の推奨（1600×2560px・RGB・JPEG） |
 | SVG | そのまま使う | 変換しない |
 
@@ -696,7 +744,7 @@ images:
   min_width: 600          # これより幅が小さい画像は警告する
 ```
 
-画像の処理には Pillow を使います（`pip install -r requirements.txt` で入ります）。Pillow が無い場合は警告を出して最適化を省略し、元画像をそのまま使います。
+画像の処理には Pillow を使います（`bash scripts/setup.sh` で入ります）。Pillow が無い場合は警告を出して最適化を省略し、元画像をそのまま使います。最適化を使わないとき（Pillow が無い・`optimize: false`・`--no-optimize-images`）はメタデータも消えないため、撮影場所（GPS 位置情報）の入った JPEG があると警告が出ます。
 
 > **注記:** このテンプレートを作成した環境からは kdp.amazon.com に接続できなかったため、上の数値は、ほかのサイトに引用されていた Kindle Publishing Guidelines の記述（画像は表示サイズに対して 300ppi 相当、72ppi 未満は変換に失敗する、透過画像・TIFF・アニメーション GIF は非対応）と KDP ヘルプの表紙の推奨値をもとに決めています。1 枚あたり 5MB の上限は公式の数値として確認できなかったため、安全側の目安です。出版前に最新の [Kindle Publishing Guidelines](https://kdp.amazon.co.jp/ja_JP/help/topic/G200645680) を確認してください。
 
@@ -705,7 +753,7 @@ images:
 表記ゆれ・文章の誤りと、リンク切れ・参照ミスを **1 つのコマンドで** チェックします。
 
 ```bash
-npm install          # 初回だけ（Node.js 20 以上）
+npm install          # 初回だけ（Node.js 22.12 以上）
 npm run lint         # books/ 以下の全ての本をチェック（make lint でも可）
 ```
 
@@ -760,7 +808,7 @@ npm run lint         # books/ 以下の全ての本をチェック（make lint �
 | 空白 | 全角文字どうしの間の空白、感嘆符・疑問符の後の空白 など | [textlint-rule-preset-ja-spacing](https://github.com/textlint-ja/textlint-rule-preset-ja-spacing)（一部） |
 | 相互参照 | `@sec:` / `@fig:` / `@tbl:` / `@lst:` の参照先があるか、ID が章をまたいで重複していないか | `scripts/check-manuscript.mjs`（Pandoc で解析） |
 | 内部リンク | `[…](#id)` のリンク先の ID があるか。`[…](02-build.md)` のような章ファイルへのリンク（EPUB では切れる）がないか | 〃 |
-| 画像 | 参照している画像ファイルがあるか（`book.yaml` の表紙も）、Kindle で使える形式か | 〃 |
+| 画像 | 参照している画像ファイルがあるか（`book.yaml` の表紙も）、Kindle で使える形式か、代替テキスト（`![説明](…)`）があるか（無ければ警告） | 〃 |
 | 外部 URL | ページがなくなっていないか（HTTP 404 / 410、ドメインなし、証明書エラーはエラー。403・タイムアウトなどは警告） | 〃（`lint/linkcheck.json` で除外・タイムアウトを設定） |
 
 **textlint を選んだ理由**: 日本語向けのルール（textlint-ja）が最も充実しており、技術書向けのプリセットや表記ゆれ検出、辞書による表記統一（prh）をそのまま組み合わせられるためです。RedPen なども候補ですが、Java が必要で、日本語のルールや辞書の選択肢が少なくなります。
@@ -893,6 +941,7 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
 | **表のはみ出し** | Kindle は大きな表をタップで拡大表示する場合がある。小さな画面（電話）で読めるか確認する |
 | **「最初から読む」の位置** | nav の landmarks の `bodymatter` で指定（最初の章＝まえがき）。メニューの「最初に移動」で本文の先頭に飛ぶか確認する |
 | **表紙** | 販売ページと端末の本棚の表紙は、KDP で**別にアップロードした画像**が使われる。EPUB 内の表紙と同じ画像にする |
+| **表紙が 2 回出ていないか** | 本の先頭で表紙が 2 枚続けて出ないか（表紙の次が扉になっているか）。HTML の表紙ページは既定で入れていないが、`layout.cover_page: true` にした場合は特に確認する |
 | **フォントを埋め込んだ場合**（`fonts`） | 埋め込みフォントの使用許諾（電子書籍への埋め込み可か）は EPUBCheck では分からない。Kindle では読者がフォントを変えると埋め込みフォントは使われない |
 | **ダークモード・セピア** | 文字色・背景色を指定していないので通常は問題ないが、画像（透過 PNG の黒い線など）が背景に溶けないか確認する |
 
@@ -941,7 +990,7 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
 
 `.github/workflows/lint.yml` は、同じタイミングで [原稿のチェック](#原稿のチェック)（`npm run lint`）を実行します。
 
-1. Node.js 22 と Pandoc（3.9）をセットアップし、`npm ci` でチェック用のツールを入れる
+1. `.nvmrc` の Node.js と Pandoc（3.9）をセットアップし、`npm ci` でチェック用のツールを入れる
 2. `npm run lint` で全ての本の表記・文章とリンク・参照をチェック
 3. 指摘はプルリクエストの「Files changed」で該当行に注釈として表示される。エラーがあるとジョブが失敗する（警告だけなら成功）
 
@@ -949,16 +998,31 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
 
 | ジョブ | 内容 |
 |:--|:--|
-| `Python scripts (pytest)` | `build.py`（EPUB のビルド）・`cover.py`（表紙の生成）・`images.py`（画像の最適化）・`paperback.py`（ペーパーバック PDF）・`validate.py`（EPUBCheck の判定）のテスト |
-| `Manuscript check (node --test)` | `check-manuscript.mjs`（原稿のチェック）のテスト。一時的な本を作って実行し、指摘の内容・行番号・終了コードを確かめる |
+| `Python scripts (pytest)` | `build.py`（EPUB のビルド）・`cover.py`（表紙の生成）・`images.py`（画像の最適化）・`paperback.py`（ペーパーバック PDF）・`validate.py`（EPUBCheck の判定）・`setup.sh`（ツールのインストール）のテスト |
+| `Manuscript check (node --test)` | `check-manuscript.mjs`（原稿のチェック）・表記ルールの辞書・Node.js の要件のテスト。一時的な本を作って実行し、指摘の内容・行番号・終了コードを確かめる |
 
-手元では次のように実行できます（`make test` で両方）。Pandoc・Vivliostyle・Chrome・EPUBCheck・日本語フォントが無い環境では、それらを使うテストはスキップされます。
+### テスト
+
+`tests/` に、スクリプトの動作を確かめるテストがあります。過去に見つかった不具合（[docs/review-2026-11.md](docs/review-2026-11.md)）が再発しないことも確認します。手元では次のように実行できます。Pandoc・Vivliostyle・Chrome・EPUBCheck・日本語フォントが無い環境では、それらを使うテストはスキップされます。
 
 ```bash
 pip install -r tests/requirements.txt
-python3 -m pytest                       # 時間のかかる PDF の組版を除くなら -m "not slow"
-node --test "tests/*.test.mjs"
+npm ci
+make test                               # すべて（Python と Node.js のテスト）
+python3 -m pytest                       # Python のテストだけ。時間のかかる PDF の組版を除くなら -m "not slow"
+node --test "tests/*.test.mjs"          # Node.js のテストだけ（npm test と同じ）
 ```
+
+再発防止のテストは次のファイルにあります。
+
+| ファイル | 確かめること |
+|:--|:--|
+| `tests/test_images_regressions.py` | 画像の最適化（拡張子だけ違う画像が別々のまま残る、EXIF・GPS 位置情報が消える） |
+| `tests/test_build_regressions.py` | 実際に EPUB をビルドして中身を確認（HTML の表紙ページが無い、アクセシビリティのメタデータ、画像の取り違えが無い）。pandoc 3.1 以上が必要 |
+| `tests/test_setup.py` | `scripts/setup.sh`（PEP 668 の環境でも止まらない、古い pandoc を見つける）、Makefile と `.venv` |
+| `tests/manuscript.test.mjs` | 表記ルールの辞書の誤検出（「お客様に」を直さない）、Node.js の要件、代替テキストの警告 |
+
+表記ルールの辞書（`lint/dict/*.yml`）にルールを足すときは、誤検出しない例も `specs` に書いてください（`from` と `to` を同じにする）。`npm test` と `npm run lint` で確認されます。
 
 ## 設計上の判断（KDP ガイドラインに基づいて決めたこと）
 
@@ -985,6 +1049,8 @@ node --test "tests/*.test.mjs"
 | ISBN は任意。無い場合は `book.yaml` の固定 UUID を `dc:identifier` にする | KDP の電子書籍は ISBN 不要（ASIN が付与される）。EPUB には一意な識別子が必須で、ビルドごとに変わると別の本として扱われるため固定 |
 | 表紙は 1600×2560px（縦横比 1.6:1）の JPEG を推奨し、外れると警告 | KDP ヘルプの表紙の推奨値（理想 2560×1600px、JPEG または TIFF、RGB）。KDP では表紙を EPUB とは別にアップロードする |
 | 表紙画像は EPUB にも埋め込む（`cover-image`） | Kindle Previewer やほかのリーダーでも表紙が出るように。販売ページの表紙は KDP でアップロードしたものが使われる |
+| 表紙は**画像としてだけ**持ち、HTML の表紙ページ（pandoc が作る `cover.xhtml`）は EPUB から取り除く（`layout.cover_page: true` で残せる） | Kindle Publishing Guidelines は、表紙画像に加えて HTML の表紙ページを本文に入れないよう求めている（表紙が 2 回表示される・変換に失敗することがある）。KDP では表紙を EPUB とは別にアップロードするので、本文の中に表紙ページは要らない |
+| アクセシビリティのメタデータ（`schema:accessMode` など）を自動で入れる。適合（`dcterms:conformsTo`）は宣言しない | 欧州アクセシビリティ法（EAA）で EU のストアの電子書籍に求められるため。適合は確認した人が宣言するもので、ツールが自動で決めるべきではない（[詳細](#アクセシビリティのメタデータ)） |
 | 扉ページの書名・副題・著者は `dc:title`（main / subtitle）と `dc:creator` だけから作る | pandoc の `author` / `subtitle` も併せて渡すと、扉に副題が 2 回・著者名が 2 回出るため |
 | タイトル・著者に読み（`file-as`）を持たせる | 日本語書名の並べ替えに使われる。KDP の入力欄のフリガナとは別物なので、KDP 側でも入力する |
 
@@ -1026,7 +1092,10 @@ node --test "tests/*.test.mjs"
 | 症状 | 対処 |
 |:--|:--|
 | `pandoc が見つかりません` | `bash scripts/setup.sh` を実行するか、`PANDOC=/path/to/pandoc` を指定 |
-| `PyYAML が必要です` | `pip install -r requirements.txt` |
+| `PyYAML が必要です` | `bash scripts/setup.sh` を実行する（`.venv` に入る）。手動なら `.venv/bin/python -m pip install -r requirements.txt` |
+| `error: externally-managed-environment`（pip） | システムの Python には入れられない（PEP 668）。`bash scripts/setup.sh` で `.venv` に入れる（[Python の仮想環境](#python-の仮想環境venv)） |
+| `pandoc 3.1 以上が必要です` | 古い pandoc（Ubuntu 22.04 の apt の 2.9 など）が使われている。`bash scripts/setup.sh` で入れ直すか、`PANDOC=/path/to/pandoc` を指定 |
+| `Node.js 22.12.0 以上が必要です` | Node.js を 24 LTS などに更新する（nvm なら `nvm install && nvm use`）。更新したら `npm ci` をやり直す |
 | `参照先が見つかりません: @fig:xxx` | ID の綴りを確認。図は `{#fig:xxx}`、表はキャプション行の末尾に `{#tbl:xxx}` |
 | `[WARNING] Could not load translations for ja` | pandoc 3.1 系の無害な警告。pandoc 3.9 では出ない |
 | 日本語の文中に空白が入る | 半角スペースを入れていないか確認（改行は自動で詰められる） |
@@ -1036,7 +1105,10 @@ node --test "tests/*.test.mjs"
 | `日本語フォントが見つかりません` | `sudo apt install fonts-noto-cjk`（Linux）、または `cover_design.font` にフォントファイルのパスを書く |
 | 表紙の文字が小さい・改行位置が不自然 | `cover_design.title` などに `\n` を入れて改行位置を指定するか、表記を短くする |
 | 画像の変更が EPUB に反映されない | `make clean` で `dist/.image-cache/` を消してビルドし直す |
-| `Pillow が無いため画像を最適化していません` | `pip install -r requirements.txt` |
+| `Pillow が無いため画像を最適化していません` | `bash scripts/setup.sh` を実行する |
+| `… に撮影場所（GPS 位置情報）が入っています` | 画像の最適化を有効にする（メタデータが消える）か、画像編集ソフトで位置情報を削除する |
+| `画像 … と … の最適化後のファイル名が同じ` | どちらかの画像の名前を変える |
+| `代替テキスト（alt）の無い画像が … 枚あります` | `![](…)` の `[]` に図の説明を書く（[アクセシビリティのメタデータ](#アクセシビリティのメタデータ)） |
 | EPUBCheck が見つからない | `bash scripts/setup.sh` を実行するか、`EPUBCHECK_JAR=/path/to/epubcheck.jar` を設定 |
 | `Java が見つかりません` | Java 11 以上をインストール（[EPUBCheck による検証](#epubcheck-による検証)） |
 | `EPUBCheck で warning 以上のメッセージが見つかりました` | 表示された場所（EPUB 内のファイル・行）を確認する。`dist/*.epub` は ZIP なので展開して該当の XHTML を見られる。原稿（Markdown）・`book.yaml`・`css` で追加した CSS のどれが原因かを特定して直す |
@@ -1046,6 +1118,6 @@ node --test "tests/*.test.mjs"
 | `paperback.margins.… が KDP の最小値 … より小さいです` | 天・地・小口の余白を 6.4mm（裁ち落としありは 9.5mm）以上にする |
 | ペーパーバックで画像の dpi の警告が出る | 元画像を大きい解像度のものに差し替える（表示された幅の px 以上が目安）。小さく置く画像なら無視してよい |
 | `textlint が見つかりません` | リポジトリのルートで `npm install` を実行 |
-| `npm run lint` で外部リンクが「接続できませんでした」 | 社内ネットワークなどで外に出られない。`npm run lint -- --no-external` で省略するか、`HTTPS_PROXY` を設定する（自動でプロキシを使う） |
+| `npm run lint` で外部リンクが「接続できませんでした」 | 社内ネットワークなどで外に出られない。`npm run lint -- --no-external` で省略するか、`HTTPS_PROXY` を設定する（Node.js 24 以降・22.21 以降なら自動でプロキシを使う。それより古い Node.js では警告が出て、プロキシは使われない） |
 | `Error while loading rule 'prh': … spec failed` | 辞書の `specs` の結果が `to` と違う。`lint/dict/*.yml` のそのルールの `pattern` を見直す |
 | `npx textlint` だと `:::` やルビが指摘される | `npm run lint` を使う（[Pandoc の記法への対応](#チェックの内容とツール)） |

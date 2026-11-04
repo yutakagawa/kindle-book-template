@@ -45,11 +45,20 @@ rules:
     specs:
       - from: キーを押える
         to: キーを押さえる
+  # 「減少か」「多少か」などの熟語は直さない（「減少なか」に壊さない）
   - expected: 少な$1
-    pattern: /少([いくかけ])/
+    pattern: /(?<![減多希僅過微軽最年幼])少([いくかけ])/
     specs:
       - from: 少い
         to: 少ない
+      - from: 数が少く
+        to: 数が少なく
+      - from: 減少かどうか
+        to: 減少かどうか
+      - from: 多少か
+        to: 多少か
+      - from: 希少かつ
+        to: 希少かつ
   - expected: 断$1
     pattern: /断わ([らりるれろっ])/
     specs:
@@ -86,13 +95,26 @@ rules:
         to: Pythonなどを使います。
       - from: 平等に扱う
         to: 平等に扱う
+  # 「の様に」だけを直す。「お客様に」「田中様に」「神様に」などの敬称は直さない
   - expected: ように
-    pattern: /(?<![同異多仕模王皆])様に/
+    pattern: /(?<=の)様に/
     specs:
       - from: 次の様に書きます
         to: 次のように書きます
+      - from: どの様に使うか
+        to: どのように使うか
       - from: 同様に書きます
         to: 同様に書きます
+      - from: お客様にお届けします
+        to: お客様にお届けします
+      - from: 田中様にご連絡ください
+        to: 田中様にご連絡ください
+      - from: 神様に祈る
+        to: 神様に祈る
+      - from: 奥様に
+        to: 奥様に
+      - from: 皆様に
+        to: 皆様に
   - expected: できる
     pattern: /出来る/
   - expected: でき$1

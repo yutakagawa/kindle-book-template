@@ -32,7 +32,7 @@ jobs:
       # ペーパーバック PDF のテストで Vivliostyle を使う
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version-file: .nvmrc
           cache: npm
       - name: Install npm packages (Vivliostyle)
         run: npm ci
@@ -60,7 +60,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version-file: .nvmrc
           cache: npm
       - name: Install npm packages
         run: npm ci

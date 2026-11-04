@@ -12,7 +12,10 @@ build.py から呼ばれる。元の画像は変更せず、最適化した画�
 - 表示サイズに対して大きすぎる画像は縮小する（既定は幅 1600 × 高さ 2560px 以内。
   拡大はしない）。不要に大きい画像は配信コスト（70% ロイヤリティの配信料）も増やす
 - 1 枚あたり 5MB 以内に収める（JPEG は画質を段階的に下げ、PNG は JPEG に切り替える）
-- EXIF の回転情報を反映してからメタデータを取り除く
+- EXIF の回転情報を反映してからメタデータを取り除く。再エンコードしない画像（「変更なし」）も、
+  EXIF（GPS 位置情報・機種名など）・XMP・IPTC・コメントを取り除いてから使う（画質は変わらない）
+- 拡張子が変わる画像は元の拡張子を名前に残す（diagram.tiff → diagram.tiff.png）。
+  diagram.png と diagram.tiff が両方あっても、別々の画像として扱う
 - SVG はそのまま使う（変換しない）
 
 キャッシュ: 元画像の内容（SHA-256）と設定が前回と同じで、出力が残っていれば再処理しない。
@@ -28,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # 設定やアルゴリズムを変えたら上げる（キャッシュを作り直させるため）
-OPTIMIZER_VERSION = 1
+OPTIMIZER_VERSION = 2
 
 RASTER_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".bmp", ".webp"}
 PASSTHROUGH_EXTS = {".svg"}
@@ -157,13 +160,16 @@ def optimize_book_images(book_dir: Path, cfg: dict, cache_root: Path, cover: Pat
             else:
                 with Image.open(src) as im:
                     data, ext, res = process_image(im, src, rel, limits, is_cover, entry_warnings)
-                out_rel = str(Path(rel).with_suffix(ext).as_posix())
+                if data is None:
+                    # 再エンコードしない画像も、位置情報などのメタデータだけは取り除く
+                    original = src.read_bytes()
+                    data = strip_metadata(original, ext)
+                    if data != original:
+                        res.actions = [a for a in res.actions if a != "変更なし"] + ["メタデータを削除"]
+                out_rel = output_name(rel, ext)
                 dest = cache_dir / out_rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                if data is None:
-                    shutil.copyfile(src, dest)
-                else:
-                    dest.write_bytes(data)
+                dest.write_bytes(data)
                 res.out_bytes = dest.stat().st_size
             entry = {
                 "sha256": digest,
@@ -176,6 +182,12 @@ def optimize_book_images(book_dir: Path, cfg: dict, cache_root: Path, cover: Pat
             }
             warnings += entry_warnings
 
+        clash = next((r for r, e in new_entries.items() if e["output"].casefold() == entry["output"].casefold()), None)
+        if clash is not None:
+            raise ValueError(
+                f"画像 {clash} と {rel} の最適化後のファイル名が同じ（{entry['output']}）になります。"
+                "どちらかの名前を変えてください"
+            )
         new_entries[rel] = entry
         out_path = (cache_dir / entry["output"]).resolve()
         mapping[rel] = str(out_path)
@@ -196,6 +208,176 @@ def optimize_book_images(book_dir: Path, cfg: dict, cache_root: Path, cover: Pat
         encoding="utf-8",
     )
     return OptimizeReport(mapping, cover_out, results, warnings)
+
+
+def output_name(rel: str, ext: str) -> str:
+    """最適化版の相対パス。拡張子が変わるときは元の拡張子を残す（a.tiff → a.tiff.png）。
+
+    拡張子だけを置き換えると、a.tiff と a.png が両方あるときに同じ a.png になり、
+    片方の画像がもう片方で上書きされてしまう。
+    """
+    return rel if Path(rel).suffix == ext else rel + ext
+
+
+# ---------------------------------------------------------------------------
+# メタデータの削除（再エンコードせずに、位置情報などを含む部分だけを取り除く）
+# ---------------------------------------------------------------------------
+
+# 残す JPEG の APP セグメント: APP0（JFIF）、APP2 の ICC プロファイル、APP14（Adobe。色の変換方法）
+_JPEG_KEEP_APP = {0xE0, 0xEE}
+# 削除する PNG の補助チャンク（テキスト・EXIF・更新日時）。色の情報（iCCP・sRGB・gAMA）や pHYs は残す
+_PNG_DROP_CHUNKS = {b"eXIf", b"tEXt", b"zTXt", b"iTXt", b"tIME"}
+
+
+def strip_metadata(data: bytes, ext: str) -> bytes:
+    """JPEG / PNG のバイト列から EXIF・XMP・IPTC・コメントなどを取り除く（画素データはそのまま）。
+
+    解釈できない形式のときは元のバイト列を返す。
+    """
+    ext = ext.lower()
+    if ext in (".jpg", ".jpeg") and data[:2] == b"\xff\xd8":
+        return strip_jpeg_metadata(data)
+    if ext == ".png" and data[:8] == b"\x89PNG\r\n\x1a\n":
+        return strip_png_metadata(data)
+    return data
+
+
+def _jpeg_segments(data: bytes):
+    """JPEG のヘッダ部分のセグメントを (マーカー, 開始位置, 終了位置) で返す。最後は SOS 以降（画像データ）。"""
+    pos = 2
+    n = len(data)
+    while pos + 4 <= n:
+        if data[pos] != 0xFF:
+            raise ValueError("JPEG のセグメントを解釈できません")
+        marker = data[pos + 1]
+        if marker == 0xFF:  # 詰め物
+            pos += 1
+            continue
+        if marker == 0xD8 or 0xD0 <= marker <= 0xD7 or marker == 0x01:
+            yield marker, pos, pos + 2
+            pos += 2
+            continue
+        length = int.from_bytes(data[pos + 2:pos + 4], "big")
+        end = pos + 2 + length
+        if length < 2 or end > n:
+            raise ValueError("JPEG のセグメントの長さが正しくありません")
+        if marker == 0xDA:  # SOS: ここから画像データ。最初の EOI まで
+            eoi = _find_eoi(data, end)
+            yield marker, pos, eoi
+            return
+        yield marker, pos, end
+        pos = end
+    raise ValueError("JPEG に画像データ（SOS）がありません")
+
+
+def _find_eoi(data: bytes, start: int) -> int:
+    """画像データ（エントロピー符号化部分）の後の最初の EOI の直後の位置。
+
+    画像データ中の 0xFF は 0xFF00 か RST（0xFFD0〜D7）になるので、それ以外のマーカーで終わる。
+    EOI より後ろ（MPO の 2 枚目以降の画像など。それぞれに EXIF がある）は捨てる。
+    """
+    pos = start
+    while True:
+        pos = data.find(b"\xff", pos)
+        if pos < 0 or pos + 1 >= len(data):
+            return len(data)
+        nxt = data[pos + 1]
+        if nxt == 0xD9:
+            return pos + 2
+        if nxt == 0x00 or 0xD0 <= nxt <= 0xD7 or nxt == 0xFF:
+            pos += 1
+            continue
+        # プログレッシブ JPEG: 次のスキャンの DHT / SOS などのセグメント
+        length = int.from_bytes(data[pos + 2:pos + 4], "big")
+        pos += 2 + length
+
+
+def _keep_jpeg_segment(data: bytes, marker: int, start: int, end: int) -> bool:
+    if marker == 0xFE:  # COM
+        return False
+    if 0xE0 <= marker <= 0xEF:
+        if marker == 0xE2:
+            return data[start + 4:start + 16] == b"ICC_PROFILE\x00"
+        return marker in _JPEG_KEEP_APP
+    return True
+
+
+def strip_jpeg_metadata(data: bytes) -> bytes:
+    try:
+        segments = list(_jpeg_segments(data))
+    except ValueError:
+        return data
+    out = bytearray(data[:2])
+    for marker, start, end in segments:
+        if marker == 0xD8:
+            continue
+        if _keep_jpeg_segment(data, marker, start, end):
+            out += data[start:end]
+    return bytes(out)
+
+
+def strip_png_metadata(data: bytes) -> bytes:
+    out = bytearray(data[:8])
+    pos = 8
+    while pos + 12 <= len(data):
+        length = int.from_bytes(data[pos:pos + 4], "big")
+        ctype = data[pos + 4:pos + 8]
+        end = pos + 12 + length
+        if end > len(data):
+            return data
+        if ctype not in _PNG_DROP_CHUNKS:
+            out += data[pos:end]
+        pos = end
+        if ctype == b"IEND":
+            break
+    return bytes(out)
+
+
+def jpeg_has_gps(data: bytes) -> bool:
+    """JPEG の EXIF に GPS 情報（GPS IFD へのポインタ 0x8825）があるか。Pillow 無しで使える。"""
+    if data[:2] != b"\xff\xd8":
+        return False
+    try:
+        segments = list(_jpeg_segments(data))
+    except ValueError:
+        return False
+    for marker, start, end in segments:
+        if marker == 0xE1 and data[start + 4:start + 10] == b"Exif\x00\x00":
+            return _tiff_ifd0_has_tag(data[start + 10:end], 0x8825)
+    return False
+
+
+def _tiff_ifd0_has_tag(tiff: bytes, tag: int) -> bool:
+    if tiff[:2] == b"II":
+        order = "little"
+    elif tiff[:2] == b"MM":
+        order = "big"
+    else:
+        return False
+    offset = int.from_bytes(tiff[4:8], order)
+    if offset + 2 > len(tiff):
+        return False
+    count = int.from_bytes(tiff[offset:offset + 2], order)
+    for i in range(count):
+        entry = offset + 2 + i * 12
+        if entry + 2 > len(tiff):
+            return False
+        if int.from_bytes(tiff[entry:entry + 2], order) == tag:
+            return True
+    return False
+
+
+def find_gps_images(book_dir: Path, skip: list[Path]) -> list[str]:
+    """位置情報（GPS）付きの JPEG の一覧（画像の最適化を使わないときの警告用）。"""
+    found = []
+    for p in find_images(book_dir, skip):
+        if p.suffix.lower() in (".jpg", ".jpeg"):
+            try:
+                if jpeg_has_gps(p.read_bytes()):
+                    found.append(p.relative_to(book_dir).as_posix())
+            except OSError:
+                pass
+    return found
 
 
 def parse_color(value: str) -> tuple[int, int, int]:
@@ -345,7 +527,8 @@ def encode(im, fmt: str, s: dict, quality: int | None = None) -> bytes:
                 progressive=False, subsampling="4:2:0", dpi=(300, 300))
     else:
         im.save(buf, "PNG", optimize=True, dpi=(300, 300))
-    return buf.getvalue()
+    # Pillow は元画像のコメントなどを引き継いで書き込むことがあるので、ここでも取り除く
+    return strip_metadata(buf.getvalue(), ".jpg" if fmt == "JPEG" else ".png")
 
 
 # ---------------------------------------------------------------------------
