@@ -6,7 +6,7 @@ VALIDATE := $(PYTHON) scripts/validate.py
 # EPUBCheck で失敗にする重大度: fatal / error / warning（既定）/ info / usage
 FAIL_ON  ?= warning
 
-.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book clean setup test test-python test-node
+.PHONY: all build check check-modes validate lint lint-fix vertical horizontal book paperback paperback-modes paperback-book test test-python test-node clean setup
 
 all: build
 
@@ -59,17 +59,17 @@ paperback-modes:
 paperback-book:
 	$(BUILD) --paperback $(BOOK)
 
-setup:
-	bash scripts/setup.sh
-
-## スクリプトのテスト（tests/）。Node.js のテストには先に npm ci が必要
+## scripts/ のテスト（tests/）。先に pip install -r tests/requirements.txt と npm install が必要
 test: test-python test-node
 
 test-python:
-	$(PYTHON) -m unittest discover -s tests
+	$(PYTHON) -m pytest
 
 test-node:
-	npm test
+	node --test "tests/*.test.mjs"
+
+setup:
+	bash scripts/setup.sh
 
 clean:
 	rm -rf dist

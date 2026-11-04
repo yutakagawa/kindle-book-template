@@ -370,6 +370,9 @@ def token_advance(tok: Token, font, size: int, el: Element) -> float:
 
 
 def atom_length(atom: Atom, font, size: int, el: Element) -> float:
+    if atom.kind == "nl":
+        # 改行は文字ではないので測らない（libraqm で "\n" を測ると Pillow 13 では RuntimeError になる）
+        return 0.0
     if el.vertical:
         return sum(token_advance(t, font, size, el) for t in atom.tokens)
     if atom.kind == "space":

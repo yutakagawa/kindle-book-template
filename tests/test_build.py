@@ -1,219 +1,473 @@
-"""scripts/build.py のテスト（EPUB を実際にビルドして中身を確かめる。pandoc 3.1 以上が必要）。
-
-- docs/review-2026-11.md の 1: 拡張子だけ違う画像が EPUB の中で同じ画像になる
-- docs/review-2026-11.md の 5: EPUB に HTML の表紙ページ（cover.xhtml）が本文として入る
-- docs/review-2026-11.md の 6: 画像の最適化を無効にしたとき、GPS 付きの写真が黙って入る
-- docs/review-2026-11.md の 7: アクセシビリティのメタデータが無い
-"""
+"""scripts/build.py（EPUB のビルド）のテスト。"""
 
 from __future__ import annotations
 
-import contextlib
 import io
+import json
 import re
-import tempfile
-import unittest
-import xml.etree.ElementTree as ET
+import stat
+import sys
+import uuid
 import zipfile
 from pathlib import Path
 
-from helpers import gps_exif, have_pandoc, have_pillow, solid_image, write_book
+import pytest
 
 import build
+from conftest import ROOT, make_image, run_script
 
-OPF_NS = {"opf": "http://www.idpf.org/2007/opf"}
 
-BOOK_YAML = """\
-title: テストの本
-author: テスト 著者
-uuid: 3d5c1c0e-6c43-4d38-9a2e-2a3f6f2f4b11
-language: ja
-{extra}
+# ---------------------------------------------------------------------------
+# 設定の読み込み・正規化
+# ---------------------------------------------------------------------------
+
+class TestLoadConfig:
+    def test_missing_book_yaml(self, tmp_path):
+        with pytest.raises(build.BuildError, match="book.yaml"):
+            build.load_config(tmp_path)
+
+    def test_empty_file_is_empty_dict(self, tmp_path):
+        (tmp_path / "book.yaml").write_text("", encoding="utf-8")
+        assert build.load_config(tmp_path) == {}
+
+    def test_not_a_mapping(self, tmp_path):
+        (tmp_path / "book.yaml").write_text("- a\n- b\n", encoding="utf-8")
+        with pytest.raises(build.BuildError, match="形式"):
+            build.load_config(tmp_path)
+
+
+@pytest.mark.parametrize("value, expected", [(None, []), ("a", ["a"]), (["a", "b"], ["a", "b"])])
+def test_as_list(value, expected):
+    assert build.as_list(value) == expected
+
+
+class TestNormalizePeople:
+    def test_string_and_dict(self):
+        people = build.normalize_people(["山田 太郎", {"name": "鈴木", "kana": "スズキ", "role": "ill"}], "aut")
+        assert people == [
+            {"text": "山田 太郎", "role": "aut"},
+            {"text": "鈴木", "role": "ill", "file-as": "スズキ"},
+        ]
+
+    def test_single_value_and_empty_names(self):
+        assert build.normalize_people("著者", "aut") == [{"text": "著者", "role": "aut"}]
+        assert build.normalize_people([{"name": ""}, {"kana": "ナシ"}], "ctb") == []
+        assert build.normalize_people(None, "aut") == []
+
+
+class TestNormalizeIsbn:
+    @pytest.mark.parametrize("raw, expected", [
+        ("978-4-00-000000-0", "9784000000000"),
+        ("4-00-000000-x", "400000000X"),
+        ("978 4 00 000000 0", "9784000000000"),
+    ])
+    def test_valid(self, raw, expected):
+        assert build.normalize_isbn(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["123", "978-4-00-000000-00"])
+    def test_invalid_length(self, raw):
+        with pytest.raises(build.BuildError, match="ISBN"):
+            build.normalize_isbn(raw)
+
+
+# ---------------------------------------------------------------------------
+# メタデータ
+# ---------------------------------------------------------------------------
+
+BASE_CFG = {"title": "本", "author": "著者", "uuid": "12345678-1234-5678-1234-567812345678"}
+
+
+def meta_for(cfg: dict, tmp_path: Path, mode: str = "horizontal", warnings: list | None = None) -> dict:
+    return build.build_metadata(cfg, tmp_path, mode, warnings if warnings is not None else [])
+
+
+class TestBuildMetadata:
+    def test_requires_title_and_author(self, tmp_path):
+        with pytest.raises(build.BuildError, match="title"):
+            meta_for({"author": "a"}, tmp_path)
+        with pytest.raises(build.BuildError, match="author"):
+            meta_for({"title": "t"}, tmp_path)
+
+    def test_basic_fields(self, tmp_path):
+        cfg = {**BASE_CFG, "title_kana": "ホン", "subtitle": "副題", "publisher": " 出版社 ",
+               "date": "2026-11-01", "keywords": ["a", 1], "contributors": [{"name": "協力", "role": "edt"}]}
+        meta = meta_for(cfg, tmp_path)
+        assert meta["title"] == [{"type": "main", "text": "本", "file-as": "ホン"},
+                                 {"type": "subtitle", "text": "副題"}]
+        assert meta["creator"] == [{"text": "著者", "role": "aut"}, {"text": "協力", "role": "edt"}]
+        assert meta["identifier"] == [{"scheme": "UUID", "text": "urn:uuid:12345678-1234-5678-1234-567812345678"}]
+        assert meta["publisher"] == "出版社"
+        assert meta["date"] == "2026-11-01"
+        assert meta["subject"] == ["a", "1"]
+        assert meta["lang"] == "ja"
+        assert meta["toc-title"] == "目次"
+        # 扉ページで重複しないよう、pandoc の author / subtitle は設定しない
+        assert "author" not in meta and "subtitle" not in meta
+
+    @pytest.mark.parametrize("mode, direction", [("vertical", "rtl"), ("horizontal", "ltr")])
+    def test_page_progression(self, tmp_path, mode, direction):
+        meta = meta_for(BASE_CFG, tmp_path, mode)
+        assert meta["page-progression-direction"] == direction
+        assert meta["kbt"]["writing_mode"] == mode
+
+    def test_isbn_identifier(self, tmp_path):
+        meta = meta_for({**BASE_CFG, "isbn": "978-4-00-000000-0"}, tmp_path)
+        assert meta["identifier"] == [{"scheme": "ISBN-13", "text": "urn:isbn:9784000000000"}]
+        meta = meta_for({**BASE_CFG, "isbn": "4-00-000000-X"}, tmp_path)
+        assert meta["identifier"][0]["scheme"] == "ISBN-10"
+
+    def test_missing_uuid_is_deterministic_and_warns(self, tmp_path):
+        cfg = {"title": "本", "author": "著者"}
+        w1, w2 = [], []
+        m1, m2 = meta_for(cfg, tmp_path, warnings=w1), meta_for(cfg, tmp_path, warnings=w2)
+        assert m1["identifier"] == m2["identifier"]
+        expected = uuid.uuid5(uuid.NAMESPACE_URL, "kindle-book-template:本/著者")
+        assert m1["identifier"][0]["text"] == f"urn:uuid:{expected}"
+        assert any("uuid" in w for w in w1)
+        # タイトルが違えば別の UUID
+        other = meta_for({"title": "別の本", "author": "著者"}, tmp_path)
+        assert other["identifier"] != m1["identifier"]
+
+    def test_uuid_is_normalized(self, tmp_path):
+        meta = meta_for({**BASE_CFG, "uuid": "{12345678123456781234567812345678}"}, tmp_path)
+        assert meta["identifier"][0]["text"] == "urn:uuid:12345678-1234-5678-1234-567812345678"
+
+    def test_invalid_uuid(self, tmp_path):
+        with pytest.raises(build.BuildError, match="uuid"):
+            meta_for({**BASE_CFG, "uuid": "not-a-uuid"}, tmp_path)
+
+    def test_layout_options_passed_to_filters(self, tmp_path):
+        cfg = {**BASE_CFG, "layout": {"number_chapters": False, "chapter_label": "Chapter {n}", "toc_title": "Contents",
+                                      "vertical": {"code_blocks": "horizontal", "tables": "vertical", "tcy_digits": 3}}}
+        meta = meta_for(cfg, tmp_path, "vertical")
+        kbt = meta["kbt"]
+        assert kbt["number_chapters"] is False
+        assert kbt["chapter_label"] == "Chapter {n}"
+        assert kbt["vertical_code"] == "horizontal"
+        assert kbt["vertical_table"] == "vertical"
+        assert kbt["tcy_digits"] == "3"
+        assert meta["toc-title"] == "Contents"
+
+    @pytest.mark.parametrize("key", ["code_blocks", "tables"])
+    def test_invalid_vertical_mode(self, tmp_path, key):
+        with pytest.raises(build.BuildError, match=key):
+            meta_for({**BASE_CFG, "layout": {"vertical": {key: "rotated"}}}, tmp_path)
+
+    def test_cover(self, tmp_path):
+        warnings = []
+        meta_for(BASE_CFG, tmp_path, warnings=warnings)
+        assert any("cover が未設定" in w for w in warnings)
+
+        with pytest.raises(build.BuildError, match="表紙画像が見つかりません"):
+            meta_for({**BASE_CFG, "cover": "images/none.jpg"}, tmp_path)
+
+        make_image(tmp_path / "images" / "cover.jpg", (1600, 2560))
+        warnings = []
+        meta = meta_for({**BASE_CFG, "cover": "images/cover.jpg"}, tmp_path, warnings=warnings)
+        assert meta["cover-image"] == str((tmp_path / "images" / "cover.jpg").resolve())
+        assert warnings == []
+
+
+class TestCheckCover:
+    def test_good_cover(self, tmp_path):
+        warnings = []
+        build.check_cover(make_image(tmp_path / "c.jpg", (1600, 2560)), warnings)
+        assert warnings == []
+
+    def test_too_small(self, tmp_path):
+        warnings = []
+        build.check_cover(make_image(tmp_path / "c.jpg", (500, 800)), warnings)
+        assert any("小さすぎます" in w for w in warnings)
+
+    def test_wrong_ratio(self, tmp_path):
+        warnings = []
+        build.check_cover(make_image(tmp_path / "c.jpg", (1600, 1600)), warnings)
+        assert any("縦横比" in w for w in warnings)
+
+    def test_format_and_mode(self, tmp_path):
+        warnings = []
+        build.check_cover(make_image(tmp_path / "c.gif", (1600, 2560), fmt="GIF"), warnings)
+        assert any("JPEG を推奨" in w for w in warnings)
+        assert any("カラーモード" in w for w in warnings)  # GIF はパレット（P）
+
+
+# ---------------------------------------------------------------------------
+# pandoc のバージョン判定
+# ---------------------------------------------------------------------------
+
+def fake_pandoc(tmp_path: Path, version_line: str) -> str:
+    script = tmp_path / "fake-pandoc"
+    script.write_text(f"#!{sys.executable}\nprint({version_line!r})\n", encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="シェバン付きのスクリプトを使う")
+class TestPandocVersion:
+    def test_parses_version(self, tmp_path):
+        assert build.pandoc_version(fake_pandoc(tmp_path, "pandoc 3.9")) == (3, 9)
+        assert build.pandoc_version(fake_pandoc(tmp_path, "pandoc.exe 3.1.13")) == (3, 1, 13)
+
+    def test_too_old(self, tmp_path):
+        with pytest.raises(build.BuildError, match="以上が必要"):
+            build.pandoc_version(fake_pandoc(tmp_path, "pandoc 2.19.2"))
+
+    def test_unparsable(self, tmp_path):
+        with pytest.raises(build.BuildError, match="判定できません"):
+            build.pandoc_version(fake_pandoc(tmp_path, "something else"))
+
+    def test_missing(self, tmp_path):
+        with pytest.raises(build.BuildError, match="見つかりません"):
+            build.pandoc_version(str(tmp_path / "no-such-pandoc"))
+
+
+def test_pandoc_common_args_highlight_flag(tmp_path):
+    new = build.pandoc_common_args("pandoc", (3, 8), tmp_path, {})
+    old = build.pandoc_common_args("pandoc", (3, 1, 3), tmp_path, {"toc_depth": 3})
+    assert any(a.startswith("--syntax-highlighting=") for a in new)
+    assert any(a.startswith("--highlight-style=") for a in old)
+    assert old[old.index("--toc-depth") + 1] == "3"
+    # 既定の配色は styles/kindle.theme
+    assert f"--syntax-highlighting={build.STYLES / 'kindle.theme'}" in new
+    # 本のディレクトリにある .theme を優先する
+    (tmp_path / "my.theme").write_text("{}", encoding="utf-8")
+    args = build.pandoc_common_args("pandoc", (3, 9), tmp_path, {"highlight_style": "my.theme"})
+    assert f"--syntax-highlighting={tmp_path / 'my.theme'}" in args
+    # 名前（tango など）はそのまま
+    args = build.pandoc_common_args("pandoc", (3, 9), tmp_path, {"highlight_style": "tango"})
+    assert "--syntax-highlighting=tango" in args
+
+
+# ---------------------------------------------------------------------------
+# EPUB の後処理
+# ---------------------------------------------------------------------------
+
+NAV = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<body>
+<nav epub:type="toc" id="toc">
+  <ol>
+    <li><a href="text/ch001.xhtml#sec">第1章</a></li>
+    <li><a href="text/ch002.xhtml">第2章</a></li>
+  </ol>
+</nav>
+<nav epub:type="landmarks" id="landmarks" hidden="hidden">
+  <ol>
+    <li>
+      <a href="text/title_page.xhtml" epub:type="titlepage">Title Page</a>
+    </li>
+  </ol>
+</nav>
+</body>
+</html>
 """
 
-CHAPTER = """\
-# はじめに
-
-{{漢字|かんじ}}を含む本文です。
-
-![赤い図](images/diagram.png)
-
-![青い図](images/diagram.tiff)
+OPF = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>本</dc:title>
+  </metadata>
+</package>
 """
 
 
-class EpubBuildCase(unittest.TestCase):
-    """一時ディレクトリに本を作ってビルドする。"""
+class TestBodymatterLandmark:
+    def test_adds_first_chapter(self):
+        out = build.add_bodymatter_landmark(NAV)
+        assert out.count('epub:type="bodymatter"') == 1
+        m = re.search(r'<a href="([^"]+)" epub:type="bodymatter">', out)
+        assert m and m.group(1) == "text/ch001.xhtml"
+        # 既存の landmarks の項目より前に入る
+        assert out.index("bodymatter") < out.index("titlepage")
 
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-        self.book = self.root / "book"
-        self.dist = self.root / "dist"
+    def test_idempotent(self):
+        once = build.add_bodymatter_landmark(NAV)
+        assert build.add_bodymatter_landmark(once) == once
 
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def build(self, extra_yaml: str = "", chapter: str = CHAPTER, cover: bool = True, args=()):
-        if cover:
-            solid_image(self.book / "images" / "cover.jpg", (40, 90, 160), size=(1600, 2560))
-            extra_yaml = "cover: images/cover.jpg\n" + extra_yaml
-        solid_image(self.book / "images" / "diagram.png", (220, 30, 30))
-        solid_image(self.book / "images" / "diagram.tiff", (30, 30, 220))
-        write_book(self.book, BOOK_YAML.format(extra=extra_yaml), {"01.md": chapter})
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            code = build.main([str(self.book), "-o", str(self.dist), *args])
-        self.log = err.getvalue()
-        self.assertEqual(code, 0, self.log)
-        self.epub = zipfile.ZipFile(self.dist / "book.epub")
-        self.addCleanup(self.epub.close)
-        self.opf_text = self.epub.read("EPUB/content.opf").decode("utf-8")
-        self.opf = ET.fromstring(self.opf_text)  # 整形式の XML であること
-        return self.epub
-
-    def metas(self, prop: str) -> list[str]:
-        return [m.text for m in self.opf.iterfind("opf:metadata/opf:meta", OPF_NS) if m.get("property") == prop]
+    def test_without_toc_or_landmarks(self):
+        assert build.add_bodymatter_landmark("<html></html>") == "<html></html>"
+        no_landmarks = NAV.split('<nav epub:type="landmarks"')[0]
+        assert "bodymatter" not in build.add_bodymatter_landmark(no_landmarks)
 
 
-@unittest.skipUnless(have_pandoc() and have_pillow(), "pandoc 3.1 以上と Pillow が必要です")
-class CoverPageTest(EpubBuildCase):
-    def test_html_cover_page_is_removed_by_default(self):
-        epub = self.build()
-        names = epub.namelist()
-        self.assertFalse([n for n in names if n.endswith("cover.xhtml")], "cover.xhtml が残っています")
-
-        spine = [i.get("idref") for i in self.opf.iterfind("opf:spine/opf:itemref", OPF_NS)]
-        self.assertNotIn("cover_xhtml", spine)
-        self.assertFalse(spine[0].startswith("cover"), spine)
-        manifest = {i.get("id"): i for i in self.opf.iterfind("opf:manifest/opf:item", OPF_NS)}
-        self.assertNotIn("cover_xhtml", manifest)
-        for ref in self.opf.iterfind("opf:guide/opf:reference", OPF_NS):
-            self.assertNotEqual(ref.get("type"), "cover")
-
-        # 表紙画像そのものは残す（Kindle やほかのリーダーの表紙・サムネイル）
-        covers = [i for i in manifest.values() if "cover-image" in (i.get("properties") or "")]
-        self.assertEqual(len(covers), 1)
-        self.assertIn("EPUB/" + covers[0].get("href"), names)
-
-        nav = epub.read("EPUB/nav.xhtml").decode("utf-8")
-        self.assertNotIn('epub:type="cover"', nav)
-        self.assertNotIn("cover.xhtml", nav)
-        self.assertIn('epub:type="bodymatter"', nav)
-        # ほかのファイルからも表紙ページへのリンクが無いこと
-        for n in names:
-            if n.endswith((".xhtml", ".ncx", ".opf")):
-                self.assertNotIn("cover.xhtml", epub.read(n).decode("utf-8"), n)
-
-    def test_cover_page_can_be_kept(self):
-        epub = self.build("layout:\n  cover_page: true\n")
-        self.assertTrue([n for n in epub.namelist() if n.endswith("cover.xhtml")])
-        spine = [i.get("idref") for i in self.opf.iterfind("opf:spine/opf:itemref", OPF_NS)]
-        self.assertIn("cover_xhtml", spine)
-        # 表紙ページの画像は本文の画像として数えない
-        self.build("layout:\n  cover_page: true\n", chapter="# 章\n\n本文だけです。\n")
-        self.assertEqual(self.metas("schema:accessMode"), ["textual"])
-
-    def test_invalid_cover_page_value(self):
-        write_book(self.book, BOOK_YAML.format(extra="layout:\n  cover_page: yes please\n"), {"01.md": "# a\n"})
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            self.assertEqual(build.main([str(self.book), "-o", str(self.dist)]), 1)
-        self.assertIn("cover_page", err.getvalue())
-
-    def test_book_without_cover(self):
-        self.build(cover=False)
-        self.assertNotIn("cover_xhtml", self.opf_text)
+def make_fake_epub(path: Path, mimetype_first: bool = False) -> Path:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        if mimetype_first:
+            z.writestr("mimetype", "application/epub+zip")
+        z.writestr("EPUB/content.opf", OPF)
+        z.writestr("EPUB/nav.xhtml", NAV)
+        z.writestr("EPUB/text/ch001.xhtml", "<html/>")
+        if not mimetype_first:
+            z.writestr("mimetype", "application/epub+zip")
+    return path
 
 
-@unittest.skipUnless(have_pandoc() and have_pillow(), "pandoc 3.1 以上と Pillow が必要です")
-class AccessibilityMetadataTest(EpubBuildCase):
-    def test_default_metadata(self):
-        self.build()
-        self.assertEqual(self.metas("schema:accessMode"), ["textual", "visual"])
-        self.assertEqual(self.metas("schema:accessModeSufficient"), ["textual"])
-        features = self.metas("schema:accessibilityFeature")
-        for f in ("structuralNavigation", "tableOfContents", "readingOrder", "alternativeText", "rubyAnnotations"):
-            self.assertIn(f, features)
-        self.assertEqual(self.metas("schema:accessibilityHazard"), ["none"])
-        summary = self.metas("schema:accessibilitySummary")
-        self.assertEqual(len(summary), 1)
-        self.assertTrue(summary[0].strip())
-        # 適合は自動では宣言しない
-        self.assertEqual(self.metas("dcterms:conformsTo"), [])
+class TestPostprocess:
+    @pytest.mark.parametrize("mode, pwm", [("vertical", "vertical-rl"), ("horizontal", "horizontal-lr")])
+    def test_postprocess(self, tmp_path, mode, pwm):
+        epub = make_fake_epub(tmp_path / "book.epub")
+        build.postprocess(epub, mode)
+        with zipfile.ZipFile(epub) as z:
+            infos = z.infolist()
+            assert infos[0].filename == "mimetype"
+            assert infos[0].compress_type == zipfile.ZIP_STORED
+            assert z.read("mimetype") == b"application/epub+zip"
+            assert sorted(z.namelist()) == sorted(["mimetype", "EPUB/content.opf", "EPUB/nav.xhtml", "EPUB/text/ch001.xhtml"])
+            opf = z.read("EPUB/content.opf").decode()
+            assert f'<meta name="primary-writing-mode" content="{pwm}" />' in opf
+            assert 'epub:type="bodymatter"' in z.read("EPUB/nav.xhtml").decode()
+        assert not epub.with_suffix(".tmp").exists()
 
-    def test_image_without_alt_text(self):
-        self.build(chapter="# 章\n\n本文です。\n\n![](images/diagram.png)\n")
-        self.assertNotIn("alternativeText", self.metas("schema:accessibilityFeature"))
-        self.assertNotIn("rubyAnnotations", self.metas("schema:accessibilityFeature"))
-        self.assertEqual(self.metas("schema:accessModeSufficient"), ["textual,visual"])
-        self.assertIn("代替テキスト", self.log)
-
-    def test_text_only_book(self):
-        self.build(chapter="# 章\n\n本文だけです。\n", cover=True)
-        # 表紙画像は本文の画像として数えない
-        self.assertEqual(self.metas("schema:accessMode"), ["textual"])
-        self.assertNotIn("alternativeText", self.metas("schema:accessibilityFeature"))
-
-    def test_override_from_book_yaml(self):
-        self.build(
-            "accessibility:\n"
-            "  summary: 読み上げに対応した <テスト> 用の本です & 確認済み\n"
-            "  conforms_to: EPUB Accessibility 1.1 - WCAG 2.2 Level AA\n"
-            "  certified_by: テスト出版\n"
-            "  hazards: [noFlashingHazard, noMotionSimulationHazard, noSoundHazard]\n"
-        )
-        self.assertEqual(self.metas("schema:accessibilitySummary"), ["読み上げに対応した <テスト> 用の本です & 確認済み"])
-        self.assertEqual(self.metas("dcterms:conformsTo"), ["EPUB Accessibility 1.1 - WCAG 2.2 Level AA"])
-        self.assertEqual(self.metas("a11y:certifiedBy"), ["テスト出版"])
-        self.assertEqual(self.metas("schema:accessibilityHazard"),
-                         ["noFlashingHazard", "noMotionSimulationHazard", "noSoundHazard"])
-
-    def test_unknown_accessibility_key(self):
-        solid_image(self.book / "images" / "diagram.png", (220, 30, 30))
-        write_book(self.book, BOOK_YAML.format(extra="accessibility:\n  sumary: typo\n"), {"01.md": "# a\n"})
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            self.assertEqual(build.main([str(self.book), "-o", str(self.dist)]), 1)
-        self.assertIn("sumary", err.getvalue())
-
-    def test_existing_metadata_is_not_duplicated(self):
-        opf = '<package><metadata>\n    <meta property="schema:accessMode">textual</meta>\n  </metadata></package>'
-        self.assertEqual(build.add_accessibility_metadata(opf, [], {}, []), opf)
+    def test_postprocess_twice_does_not_duplicate(self, tmp_path):
+        epub = make_fake_epub(tmp_path / "book.epub", mimetype_first=True)
+        build.postprocess(epub, "vertical")
+        build.postprocess(epub, "vertical")
+        with zipfile.ZipFile(epub) as z:
+            assert z.read("EPUB/content.opf").decode().count("primary-writing-mode") == 1
+            assert z.read("EPUB/nav.xhtml").decode().count("bodymatter") == 1
 
 
-@unittest.skipUnless(have_pandoc() and have_pillow(), "pandoc 3.1 以上と Pillow が必要です")
-class EpubImagesTest(EpubBuildCase):
-    def test_same_stem_images_are_both_in_epub(self):
+# ---------------------------------------------------------------------------
+# コマンドライン
+# ---------------------------------------------------------------------------
+
+def test_main_without_books_prints_help(capsys):
+    assert build.main([]) == 2
+    assert "usage" in capsys.readouterr().out.lower()
+
+
+def test_main_reports_errors_and_continues(tmp_path, make_book, capsys):
+    bad = tmp_path / "no-book"
+    bad.mkdir()
+    assert build.main(["-o", str(tmp_path / "dist"), str(bad)]) == 1
+    assert "book.yaml がありません" in capsys.readouterr().err
+
+
+class TestBuildBookErrors:
+    def test_no_chapters(self, make_book, build_args):
+        book = make_book(chapters={})
+        with pytest.raises(build.BuildError, match="原稿"):
+            build.build_book(book, build_args())
+
+    def test_missing_chapter(self, make_book, build_args):
+        book = make_book({"chapters": ["chapters/01-intro.md", "chapters/99-none.md"]})
+        with pytest.raises(build.BuildError, match="99-none.md"):
+            build.build_book(book, build_args())
+
+    def test_invalid_writing_mode(self, make_book, build_args):
+        book = make_book({"layout": {"writing_mode": "diagonal"}})
+        with pytest.raises(build.BuildError, match="writing_mode"):
+            build.build_book(book, build_args())
+
+    def test_missing_css(self, make_book, build_args, require_pandoc):
+        book = make_book({"css": ["custom.css"]})
+        with pytest.raises(build.BuildError, match="CSS が見つかりません"):
+            build.build_book(book, build_args())
+
+
+# ---------------------------------------------------------------------------
+# 実際に pandoc でビルドする
+# ---------------------------------------------------------------------------
+
+def read_epub(path: Path) -> dict[str, bytes]:
+    with zipfile.ZipFile(path) as z:
+        assert z.infolist()[0].filename == "mimetype"
+        assert z.infolist()[0].compress_type == zipfile.ZIP_STORED
+        return {n: z.read(n) for n in z.namelist()}
+
+
+def opf_of(files: dict[str, bytes]) -> str:
+    return next(v.decode() for k, v in files.items() if k.endswith(".opf"))
+
+
+def xhtml_text(files: dict[str, bytes]) -> str:
+    return "\n".join(v.decode() for k, v in files.items() if k.endswith(".xhtml"))
+
+
+@pytest.mark.usefixtures("require_pandoc")
+class TestBuildWithPandoc:
+    def test_horizontal_book(self, make_book, build_args, tmp_path):
+        book = make_book({"cover": "images/cover.jpg"},
+                         images={"images/figure.png": (800, 400), "images/cover.jpg": (1600, 2560)})
+        out = build.build_book(book, build_args())
+        assert out == (tmp_path / "dist" / f"{book.name}.epub").resolve()
+        files = read_epub(out)
+        opf = opf_of(files)
+        assert "<dc:title" in opf and "テストの本" in opf
+        assert 'content="horizontal-lr"' in opf
+        assert "urn:uuid:12345678-1234-5678-1234-567812345678" in opf
+        assert 'properties="cover-image"' in opf
+        assert 'page-progression-direction="ltr"' in opf
+        nav = next(v.decode() for k, v in files.items() if k.endswith("nav.xhtml"))
+        assert 'epub:type="bodymatter"' in nav
+        body = xhtml_text(files)
+        # crossref.lua: 章番号と図番号、相互参照
+        assert "第1章" in body and "図1.1" in body
+        # 画像は最適化された版が入る（キャッシュに manifest ができる）
+        assert (tmp_path / "dist" / ".image-cache" / book.name / "manifest.json").exists()
+        assert any(k.endswith(".png") for k in files)
+
+    def test_vertical_override_changes_name_and_direction(self, make_book, build_args, tmp_path):
+        book = make_book()
+        out = build.build_book(book, build_args(writing_mode="vertical"))
+        assert out.name == f"{book.name}-vertical.epub"
+        opf = opf_of(read_epub(out))
+        assert 'content="vertical-rl"' in opf
+        assert 'page-progression-direction="rtl"' in opf
+
+    def test_output_name_from_config(self, make_book, build_args, tmp_path):
+        book = make_book({"output": "custom-name.epub"})
+        out = build.build_book(book, build_args(writing_mode="vertical"))
+        assert out.name == "custom-name.epub"
+
+    def test_chapters_default_to_sorted_glob(self, make_book, build_args):
+        book = make_book(chapters={"chapters/b.md": "# 後の章\n\n本文。\n", "chapters/a.md": "# 先の章\n\n本文。\n"},
+                         images={})
+        files = read_epub(build.build_book(book, build_args()))
+        body = xhtml_text(files)
+        assert body.index("先の章") < body.index("後の章")
+
+    def test_no_optimize_images(self, make_book, build_args, tmp_path):
+        book = make_book()
+        build.build_book(book, build_args(no_optimize_images=True))
+        assert not (tmp_path / "dist" / ".image-cache").exists()
+
+    def test_images_optimize_false_in_config(self, make_book, build_args, tmp_path):
+        book = make_book({"images": {"optimize": False}})
+        build.build_book(book, build_args())
+        assert not (tmp_path / "dist" / ".image-cache").exists()
+
+    def test_extra_css_is_included(self, make_book, build_args):
+        book = make_book({"css": ["custom.css"]})
+        (book / "custom.css").write_text("/* custom-marker */\n", encoding="utf-8")
+        files = read_epub(build.build_book(book, build_args()))
+        assert any(b"custom-marker" in v for k, v in files.items() if k.endswith(".css"))
+
+    def test_cover_design_generates_cover(self, make_book, build_args, tmp_path, require_japanese_font):
+        book = make_book({"cover_design": {"colors": ["#123456"]}})
+        out = build.build_book(book, build_args())
+        cover = out.with_name(out.stem + "-cover.jpg")
+        assert cover.exists()
         from PIL import Image
+        with Image.open(cover) as im:
+            assert im.size == (1600, 2560)
+        assert 'properties="cover-image"' in opf_of(read_epub(out))
 
-        epub = self.build()
-        chapter = next(n for n in epub.namelist() if re.search(r"ch\d+\.xhtml$", n))
-        srcs = re.findall(r'<img src="\.\./([^"]+)"', epub.read(chapter).decode("utf-8"))
-        self.assertEqual(len(srcs), 2)
-        self.assertEqual(len(set(srcs)), 2, f"2 つの図が同じ画像になっています: {srcs}")
-        colors = []
-        for s in srcs:
-            with Image.open(io.BytesIO(epub.read("EPUB/" + s))) as im:
-                colors.append(im.convert("RGB").getpixel((10, 10)))
-        self.assertGreater(colors[0][0], 150, "1 つ目は赤い図")
-        self.assertGreater(colors[1][2], 150, "2 つ目は青い図")
-
-    def test_gps_removed_from_epub(self):
-        import images
-
-        solid_image(self.book / "images" / "photo.jpg", (200, 200, 200), exif=gps_exif().tobytes())
-        epub = self.build(chapter="# 章\n\n![写真](images/photo.jpg)\n")
-        jpgs = [n for n in epub.namelist() if n.startswith("EPUB/media/") and n.endswith(".jpg")
-                and "cover" not in n]
-        self.assertEqual(len(jpgs), 1)
-        data = epub.read(jpgs[0])
-        self.assertFalse(images.jpeg_has_gps(data))
-        self.assertNotIn(b"TestPhone", data)
-
-    def test_warns_about_gps_when_optimization_is_disabled(self):
-        solid_image(self.book / "images" / "photo.jpg", (200, 200, 200), exif=gps_exif().tobytes())
-        self.build(chapter="# 章\n\n![写真](images/photo.jpg)\n", args=["--no-optimize-images"])
-        self.assertIn("images/photo.jpg に撮影場所（GPS 位置情報）が入っています", self.log)
+    def test_cli_all_samples(self, tmp_path):
+        """リポジトリのサンプル（books/*）が CLI からビルドできる。"""
+        result = run_script("build.py", "--all", "-o", str(tmp_path / "dist"))
+        assert result.returncode == 0, result.stderr
+        for sample in sorted((ROOT / "books").glob("*/book.yaml")):
+            assert (tmp_path / "dist" / f"{sample.parent.name}.epub").exists()
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.usefixtures("require_pandoc", "require_epubcheck")
+def test_build_and_epubcheck(make_book, build_args, tmp_path):
+    """ビルドした EPUB が EPUBCheck を警告なしで通る（--check）。"""
+    book = make_book({"cover": "images/cover.jpg"},
+                     images={"images/figure.png": (800, 400), "images/cover.jpg": (1600, 2560)})
+    report_dir = tmp_path / "reports"
+    out = build.build_book(book, build_args(check=True, report_dir=str(report_dir)))
+    report = json.loads((report_dir / f"{out.stem}.epubcheck.json").read_text(encoding="utf-8"))
+    bad = [m for m in report["messages"] if m["severity"] in ("FATAL", "ERROR", "WARNING")]
+    assert bad == []
