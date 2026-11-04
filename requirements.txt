@@ -1,2 +1,2 @@
 PyYAML>=6.0
-Pillow>=10.0   # 表紙の自動生成（scripts/cover.py）と表紙画像のサイズ確認に使う
+Pillow>=10.0   # 表紙の自動生成（scripts/cover.py）・画像の Kindle 向け最適化・表紙の確認に使う（無ければ最適化を省略）
