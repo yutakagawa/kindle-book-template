@@ -48,7 +48,7 @@ make check-modes    # 縦書き・横書きの両方で検証
 ```
 
 ::: important
-KDPにアップロードする前に、必ずKindle Previewerで表示を確認しましょう。
+KDPへアップロードする前に、必ずKindle Previewerで表示を確認しましょう。
 EPUBCheckでエラーがなくても、Kindle端末での見え方が意図どおりとは限りません。
 :::
 
