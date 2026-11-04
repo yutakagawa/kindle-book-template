@@ -32,6 +32,19 @@ jobs:
           path: dist/*.epub
           if-no-files-found: error
 
+      # KDP に入力する内容紹介・キーワード・カテゴリーの下書き。KDP の上限を超えたら失敗する
+      - name: Draft KDP listings
+        run: python3 scripts/kdp-listing.py --all --strict --json
+
+      - name: Upload KDP listing drafts
+        uses: actions/upload-artifact@v6
+        with:
+          name: kdp-listing
+          path: |
+            dist/*-kdp-listing.md
+            dist/*-kdp-listing.json
+          if-no-files-found: error
+
       - name: Upload EPUBCheck reports
         if: always()
         uses: actions/upload-artifact@v6

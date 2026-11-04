@@ -87,6 +87,15 @@ paperback:
   #   - 本書の内容に関するお問い合わせは……
   # output: my-book-paperback.pdf
 
+# ---- KDP の登録情報の下書き（python3 scripts/kdp-listing.py で作る。省略可） ----
+# 書いた項目は、原稿から作る下書きより優先されます（docs/kdp-listing.md を参照）。
+# kdp:
+#   description: >-            # 内容紹介の書き出し（省略すると description）
+#     ……
+#   closing: ……                # 内容紹介の最後に入れる文
+#   keywords: [……]             # キーワードを固定する（7 つまで）
+#   categories: [……]           # カテゴリーを固定する（3 つまで）
+
 # ---- 追加の CSS（省略可） ----
 # css:
 #   - custom.css

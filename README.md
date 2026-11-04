@@ -12,6 +12,7 @@ Markdown で書いた原稿から、**Kindle Direct Publishing（KDP）にその
 - **GitHub Actions** で push のたびに全ての本を縦書き版・横書き版の両方でビルドし、EPUBCheck で検証
 - `npm run lint` で **表記ゆれ・文章・リンク切れ** をまとめてチェック（[原稿のチェック](#原稿のチェック)）
 - 同じ原稿から **KDP ペーパーバック（紙の本）の本文 PDF** も作れる。判型・余白・ノンブル・裁ち落としは KDP の要件どおり、縦書き・横書きの両方に対応（`make paperback`。[ペーパーバック（紙の本）](#ペーパーバック紙の本)）
+- KDP に入力する **内容紹介・キーワード 7 つ・カテゴリーの候補** の下書きを、`book.yaml` と原稿から作る。文字数などの KDP の制限も確認（`make listing`。[docs/kdp-listing.md](docs/kdp-listing.md)）
 
 ```bash
 make            # → dist/horizontal-sample.epub, dist/vertical-sample.epub
@@ -72,9 +73,13 @@ make paperback  # → dist/horizontal-sample-paperback.pdf, dist/vertical-sample
 │   ├── images.py              # 画像の Kindle 向け最適化（build.py から呼ばれる）
 │   ├── paperback.py           # ペーパーバック用の本文 PDF（build.py --paperback から呼ばれる）
 │   ├── validate.py            # EPUBCheck による検証（警告以上で失敗）
+│   ├── kdp-listing.py         # KDP の内容紹介・キーワード・カテゴリーの下書き
 │   ├── check-manuscript.mjs   # 原稿のチェック（npm run lint）
 │   └── setup.sh               # ツールのインストール
 ├── templates/paperback.html   # ペーパーバック用 HTML のテンプレート（扉・目次・本文・奥付）
+├── docs/
+│   ├── tutorial.md            # はじめての人向けのチュートリアル（原稿から KDP へのアップロードまで）
+│   └── kdp-listing.md         # KDP の内容紹介・キーワード・カテゴリーの下書きの作り方
 ├── lint/                      # 原稿のチェックの設定
 │   ├── dict/technical.yml     #   技術書向けの表記ルール（辞書）
 │   ├── dict/project.yml       #   プロジェクト独自の表記ルール（辞書）
@@ -893,7 +898,7 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
    - 言語: 日本語
    - 本のタイトル・サブタイトル、その **フリガナ** と **ローマ字**（日本語の本では入力が必要）
    - 著者名とフリガナ・ローマ字。`book.yaml` の `title` / `author` と**同じ表記**にする
-   - 内容紹介、キーワード（最大 7 個）、カテゴリー
+   - 内容紹介、キーワード（最大 7 個）、カテゴリー（最大 3 つ）。`python3 scripts/kdp-listing.py books/my-book` で下書きを作れる（[docs/kdp-listing.md](docs/kdp-listing.md)）
    - 出版に関して必要な権利: 自分が著作権を持っていれば「私は著作権を所有しており…」を選択
 3. **電子書籍のコンテンツ**
    - 原稿: 「電子書籍の原稿をアップロード」で `dist/*.epub` を選択。DRM の有無を選ぶ
@@ -915,7 +920,7 @@ EPUBCheck が調べるのは **EPUB の規格に合っているか** だけで�
 
 | ジョブ | 内容 | Artifacts |
 |:--|:--|:--|
-| `Build (book.yaml)` | `books/` 以下の全ての本を `book.yaml` の設定どおりにビルドし、EPUBCheck で検証 | `epub`（KDP にアップロードする EPUB）、`epubcheck-reports`（JSON レポート） |
+| `Build (book.yaml)` | `books/` 以下の全ての本を `book.yaml` の設定どおりにビルドし、EPUBCheck で検証。KDP の登録情報の下書きも作り、上限を超えていれば失敗 | `epub`（KDP にアップロードする EPUB）、`epubcheck-reports`（JSON レポート）、`kdp-listing`（内容紹介・キーワード・カテゴリーの下書き） |
 | `Validate (vertical)` | 全ての本を **縦書き** でビルドし、EPUBCheck で検証 | `epub-vertical` |
 | `Validate (horizontal)` | 全ての本を **横書き** でビルドし、EPUBCheck で検証 | `epub-horizontal` |
 | `Paperback PDF (vertical)` / `(horizontal)` | 全ての本のペーパーバック用の本文 PDF を縦書き・横書きで作り、ページサイズ・フォントの埋め込みを確認 | `paperback-vertical` / `paperback-horizontal` |
